@@ -1,0 +1,23 @@
+[package]
+name          = "rustls-connector"
+version       = "0.1.0" # remember to update html_root_url
+authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
+edition       = "2018"
+description   = "Connector similar to openssl or native-tls for rustls"
+repository    = "https://github.com/Keruspe/rustls-connector"
+documentation = "https://docs.rs/rustls-connector"
+keywords      = ["tls", "rustls"]
+categories    = ["network-programming"]
+license       = "BSD-2-Clause"
+
+[lib]
+name = "rustls_connector"
+
+[dependencies]
+rustls       = "^0.15"
+webpki       = "^0.19"
+webpki-roots = "^0.16"
+
+[badges]
+travis-ci = { repository = "Keruspe/rustls-connector" }
+appveyor  = { repository = "Keruspe/rustls-connector" }
