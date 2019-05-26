@@ -7,9 +7,11 @@
 //! tcp-stream is a library aiming at simplifying using rustls as
 //! an alternative to openssl and native-tls
 
+pub use rustls;
+pub use webpki;
+pub use webpki_roots;
+
 use rustls::{ClientConfig, ClientSession, Session, StreamOwned as TlsStream};
-use webpki::DNSNameRef;
-use webpki_roots::TLS_SERVER_ROOTS;
 
 use std::{
     io::{Read, Write},
@@ -24,7 +26,7 @@ pub struct RustlsConnector {
 impl Default for RustlsConnector {
     fn default() -> Self {
         let mut config = ClientConfig::new();
-        config.root_store.add_server_trust_anchors(&TLS_SERVER_ROOTS);
+        config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         Self {
             config: Arc::new(config),
         }
@@ -34,7 +36,7 @@ impl Default for RustlsConnector {
 impl RustlsConnector {
     /// Connect to the given host
     pub fn connect<S: Read + Write>(&self, mut stream: S, domain: &str) -> Result<TlsStream<ClientSession, S>, ()> {
-        let mut session = ClientSession::new(&self.config, DNSNameRef::try_from_ascii_str(domain)?);
+        let mut session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain)?);
         // FIXME: handle MidHandshake/WouldBlock
         while session.is_handshaking() {
             while session.is_handshaking() && session.wants_write() {
