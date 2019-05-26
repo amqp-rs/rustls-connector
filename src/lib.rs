@@ -12,7 +12,7 @@ pub use webpki;
 pub use webpki_roots;
 
 use failure::{Backtrace, Context, Fail};
-use rustls::{ClientConfig, ClientSession, Session, StreamOwned as TlsStream, TLSError};
+use rustls::{ClientConfig, ClientSession, Session, StreamOwned as TlsStream};
 
 use std::{
     fmt,
@@ -40,17 +40,7 @@ impl RustlsConnector {
     pub fn connect<S: Read + Write>(&self, mut stream: S, domain: &str) -> Result<TlsStream<ClientSession, S>, Error> {
         let mut session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| ErrorKind::InvalidDomainName(domain.to_owned()))?);
         // FIXME: handle MidHandshake/WouldBlock
-        while session.is_handshaking() {
-            while session.is_handshaking() && session.wants_write() {
-                session.write_tls(&mut stream)?;
-            }
-            while session.is_handshaking() && session.wants_read() {
-                if session.read_tls(&mut stream)? == 0 {
-                    return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed during handshake").into());
-                }
-                session.process_new_packets()?;
-            }
-        }
+        session.complete_io()?;
         Ok(TlsStream::new(session, stream))
     }
 }
@@ -70,9 +60,6 @@ pub enum ErrorKind {
     /// An std::io::Error
     #[fail(display = "IO error: {:?}", _0)]
     IOError(#[fail(cause)] io::Error),
-    /// An invalid domain name
-    #[fail(display = "TLS error: {:?}", _0)]
-    TLSError(#[fail(cause)] TLSError),
     #[doc(hidden)]
     #[fail(display = "rustls_connector::ErrorKind::__Nonexhaustive: this should not be printed")]
     __Nonexhaustive,
@@ -116,11 +103,5 @@ impl From<Context<ErrorKind>> for Error {
 impl From<io::Error> for Error {
     fn from(io: io::Error) -> Self {
         ErrorKind::IOError(io).into()
-    }
-}
-
-impl From<TLSError> for Error {
-    fn from(tls: TLSError) -> Self {
-        ErrorKind::TLSError(tls).into()
     }
 }
