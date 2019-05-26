@@ -14,7 +14,6 @@ license       = "BSD-2-Clause"
 name = "rustls_connector"
 
 [dependencies]
-failure      = "^0.1"
 rustls       = "^0.15"
 webpki       = "^0.19"
 webpki-roots = "^0.16"

@@ -11,11 +11,11 @@ pub use rustls;
 pub use webpki;
 pub use webpki_roots;
 
-use failure::{Backtrace, Context, Fail};
 use rustls::{ClientConfig, ClientSession, Session, StreamOwned};
 
 use std::{
-    fmt,
+    fmt::{self, Debug},
+    error::Error,
     io::{self, Read, Write},
     sync::Arc,
 };
@@ -43,13 +43,13 @@ macro_rules! perform_handshake (
         if let Err(e) = $session.complete_io(&mut $stream) {
             return Err(if e.kind() == io::ErrorKind::WouldBlock {
                 if $session.is_handshaking() {
-                    ErrorKind::HandshakeWouldBlock(MidHandshakeTlsStream{ session: $session, stream: $stream })
+                    HandshakeError::WouldBlock(MidHandshakeTlsStream{ session: $session, stream: $stream })
                 } else {
                     return Ok(TlsStream::new($session, $stream));
                 }
             } else {
-                ErrorKind::IOError(e)
-            }.into());
+                e.into()
+            });
         }
         return Ok(TlsStream::new($session, $stream));
     );
@@ -57,8 +57,8 @@ macro_rules! perform_handshake (
 
 impl RustlsConnector {
     /// Connect to the given host
-    pub fn connect<S: fmt::Debug + Read + Write + Send + Sync>(&self, mut stream: S, domain: &str) -> Result<TlsStream<S>, Error<S>> {
-        let mut session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| ErrorKind::InvalidDomainName(domain.to_owned()))?);
+    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, mut stream: S, domain: &str) -> Result<TlsStream<S>, HandshakeError<S>> {
+        let mut session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name: {}", domain))))?);
         perform_handshake!(session, stream);
     }
 }
@@ -70,7 +70,7 @@ pub struct MidHandshakeTlsStream<S: Read + Write> {
     stream:  S,
 }
 
-impl<S: fmt::Debug + Read + Write + Send + Sync + 'static> MidHandshakeTlsStream<S> {
+impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
     /// Get a reference to the inner stream
     pub fn get_ref(&self) -> &S {
         &self.stream
@@ -82,7 +82,7 @@ impl<S: fmt::Debug + Read + Write + Send + Sync + 'static> MidHandshakeTlsStream
     }
 
     /// Retry the handshake
-    pub fn handshake(mut self) -> Result<TlsStream<S>, Error<S>> {
+    pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         perform_handshake!(self.session, self.stream);
     }
 }
@@ -93,66 +93,35 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
     }
 }
 
-/// The type of error that can be returned in this crate.
+/// An error returned while performing the handshake
 #[derive(Debug)]
-pub struct Error<S: fmt::Debug + Read + Write + Send + Sync + 'static> {
-    inner: Context<ErrorKind<S>>,
+pub enum HandshakeError<S: Debug + Read + Send + Sync + Write + 'static> {
+    /// We hit WouldBlock during handshake
+    WouldBlock(MidHandshakeTlsStream<S>),
+    /// We hit a critical failure
+    Failure(io::Error),
 }
 
-/// The different kinds of errors that can be reported.
-#[derive(Debug, Fail)]
-pub enum ErrorKind<S: fmt::Debug + Read + Write + Send + Sync + 'static> {
-    /// We hit a WouldBlock during handshake
-    #[fail(display = "WouldBlock during handshake")]
-    HandshakeWouldBlock(MidHandshakeTlsStream<S>),
-    /// An invalid domain name
-    #[fail(display = "Invalid domain name: {}", _0)]
-    InvalidDomainName(String),
-    /// An std::io::Error
-    #[fail(display = "IO error: {:?}", _0)]
-    IOError(#[fail(cause)] io::Error),
-    #[doc(hidden)]
-    #[fail(display = "rustls_connector::ErrorKind::__Nonexhaustive: this should not be printed")]
-    __Nonexhaustive,
-}
-
-impl<S: fmt::Debug + Read + Write + Send + Sync> Error<S> {
-    /// Return the underlying ErrorKind
-    pub fn kind(&self) -> &ErrorKind<S> {
-        self.inner.get_context()
-    }
-}
-
-impl<S: fmt::Debug + Read + Write + Send + Sync + 'static> fmt::Display for Error<S> {
+impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        self.inner.fmt(f)
+        match self {
+            HandshakeError::WouldBlock(_) => write!(f, "WouldBlock hit during handshake"),
+            HandshakeError::Failure(err)  => write!(f, "IO error: {}", err),
+        }
     }
 }
 
-impl<S: fmt::Debug + Read + Write + Send + Sync + 'static> Fail for Error<S> {
-    fn cause(&self) -> Option<&dyn Fail> {
-        self.inner.cause()
-    }
-
-    fn backtrace(&self) -> Option<&Backtrace> {
-        self.inner.backtrace()
-    }
-}
-
-impl<S: fmt::Debug + Read + Write + Send + Sync> From<ErrorKind<S>> for Error<S> {
-    fn from(kind: ErrorKind<S>) -> Self {
-        Context::new(kind).into()
+impl<S: Debug + Read + Send + Sync + Write + 'static> Error for HandshakeError<S> {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            HandshakeError::Failure(err) => Some(err),
+            _                            => None,
+        }
     }
 }
 
-impl<S: fmt::Debug + Read + Write + Send + Sync> From<Context<ErrorKind<S>>> for Error<S> {
-    fn from(inner: Context<ErrorKind<S>>) -> Self {
-        Error { inner }
-    }
-}
-
-impl<S: fmt::Debug + Read + Write + Send + Sync + 'static> From<io::Error> for Error<S> {
-    fn from(io: io::Error) -> Self {
-        ErrorKind::IOError(io).into()
+impl<S: Debug + Read + Send + Sync + Write + 'static> From<io::Error> for HandshakeError<S> {
+    fn from(err: io::Error) -> Self {
+        HandshakeError::Failure(err)
     }
 }
