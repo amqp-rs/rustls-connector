@@ -7,11 +7,14 @@
 //! tcp-stream is a library aiming at simplifying using rustls as
 //! an alternative to openssl and native-tls
 
-use rustls::{ClientConfig, ClientSession};
+use rustls::{ClientConfig, ClientSession, Session, StreamOwned as TlsStream};
 use webpki::DNSNameRef;
 use webpki_roots::TLS_SERVER_ROOTS;
 
-use std::sync::Arc;
+use std::{
+    io::{Read, Write},
+    sync::Arc,
+};
 
 /// The connector
 pub struct RustlsConnector {
@@ -30,7 +33,21 @@ impl Default for RustlsConnector {
 
 impl RustlsConnector {
     /// Connect to the given host
-    pub fn connect(&self, domain: &str) -> Result<ClientSession, ()> {
-        Ok(ClientSession::new(&self.config, DNSNameRef::try_from_ascii_str(domain)?))
+    pub fn connect<S: Read + Write>(&self, mut stream: S, domain: &str) -> Result<TlsStream<ClientSession, S>, ()> {
+        let mut session = ClientSession::new(&self.config, DNSNameRef::try_from_ascii_str(domain)?);
+        // FIXME: handle MidHandshake/WouldBlock
+        while session.is_handshaking() {
+            while session.is_handshaking() && session.wants_write() {
+                session.write_tls(&mut stream).expect("FIXME");
+            }
+            while session.is_handshaking() && session.wants_read() {
+                if session.read_tls(&mut stream).expect("FIXME") == 0 {
+                    // FIXME
+                    return Err(());
+                }
+                session.process_new_packets().expect("FIXME");
+            }
+        }
+        Ok(TlsStream::new(session, stream))
     }
 }
