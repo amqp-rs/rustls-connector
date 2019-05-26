@@ -42,7 +42,11 @@ macro_rules! perform_handshake (
     ($session: expr, $stream: expr) => (
         if let Err(e) = $session.complete_io(&mut $stream) {
             return Err(if e.kind() == io::ErrorKind::WouldBlock {
-                ErrorKind::HandshakeWouldBlock(MidHandshakeTlsStream{ session: $session, stream: $stream })
+                if $session.is_handshaking() {
+                    ErrorKind::HandshakeWouldBlock(MidHandshakeTlsStream{ session: $session, stream: $stream })
+                } else {
+                    return Ok(TlsStream::new($session, $stream));
+                }
             } else {
                 ErrorKind::IOError(e)
             }.into());
