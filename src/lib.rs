@@ -1,6 +1,6 @@
 #![deny(missing_docs)]
 #![warn(rust_2018_idioms)]
-#![doc(html_root_url = "https://docs.rs/rustls-connector/0.2.0/")]
+#![doc(html_root_url = "https://docs.rs/rustls-connector/0.3.0/")]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
