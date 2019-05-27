@@ -38,28 +38,11 @@ impl Default for RustlsConnector {
     }
 }
 
-macro_rules! perform_handshake (
-    ($session: expr, $stream: expr) => (
-        if let Err(e) = $session.complete_io(&mut $stream) {
-            return Err(if e.kind() == io::ErrorKind::WouldBlock {
-                if $session.is_handshaking() {
-                    HandshakeError::WouldBlock(MidHandshakeTlsStream{ session: $session, stream: $stream })
-                } else {
-                    return Ok(TlsStream::new($session, $stream));
-                }
-            } else {
-                e.into()
-            });
-        }
-        return Ok(TlsStream::new($session, $stream));
-    );
-);
-
 impl RustlsConnector {
     /// Connect to the given host
-    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, mut stream: S, domain: &str) -> Result<TlsStream<S>, HandshakeError<S>> {
-        let mut session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name: {}", domain))))?);
-        perform_handshake!(session, stream);
+    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, stream: S, domain: &str) -> Result<TlsStream<S>, HandshakeError<S>> {
+        let session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name: {}", domain))))?);
+        MidHandshakeTlsStream { session, stream }.handshake()
     }
 }
 
@@ -83,7 +66,16 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
 
     /// Retry the handshake
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
-        perform_handshake!(self.session, self.stream);
+        if let Err(e) = self.session.complete_io(&mut self.stream) {
+            if e.kind() == io::ErrorKind::WouldBlock {
+                if self.session.is_handshaking() {
+                    return Err(HandshakeError::WouldBlock(self));
+                }
+            } else {
+                return Err(e.into());
+            }
+        }
+        Ok(TlsStream::new(self.session, self.stream))
     }
 }
 
