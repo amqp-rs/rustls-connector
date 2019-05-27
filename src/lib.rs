@@ -32,13 +32,28 @@ impl Default for RustlsConnector {
     fn default() -> Self {
         let mut config = ClientConfig::new();
         config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        Self {
-            config: Arc::new(config),
-        }
+        config.into()
+    }
+}
+
+impl From<ClientConfig> for RustlsConnector {
+    fn from(config: ClientConfig) -> Self {
+        Arc::new(config).into()
+    }
+}
+
+impl From<Arc<ClientConfig>> for RustlsConnector {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        Self { config }
     }
 }
 
 impl RustlsConnector {
+    /// Create a new RustlsConnector from the given ClientConfig
+    pub fn new(config: ClientConfig) -> Self {
+        config.into()
+    }
+
     /// Connect to the given host
     pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, stream: S, domain: &str) -> Result<TlsStream<S>, HandshakeError<S>> {
         let session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name: {}", domain))))?);
