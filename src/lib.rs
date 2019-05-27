@@ -102,7 +102,7 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 
 /// An error returned while performing the handshake
 #[derive(Debug)]
-pub enum HandshakeError<S: Debug + Read + Send + Sync + Write + 'static> {
+pub enum HandshakeError<S: Read + Send + Sync + Write + 'static> {
     /// We hit WouldBlock during handshake
     WouldBlock(MidHandshakeTlsStream<S>),
     /// We hit a critical failure
