@@ -13,6 +13,11 @@ license       = "BSD-2-Clause"
 [lib]
 name = "rustls_connector"
 
+[features]
+default                 = []
+dangerous_configuration = [ "rustls/dangerous_configuration" ]
+quic                    = [ "rustls/quic" ]
+
 [dependencies]
 rustls       = "^0.15"
 webpki       = "^0.19"
