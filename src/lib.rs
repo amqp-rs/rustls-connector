@@ -4,8 +4,31 @@
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
-//! tcp-stream is a library aiming at simplifying using rustls as
+//! rustls-connector is a library aiming at simplifying using rustls as
 //! an alternative to openssl and native-tls
+//!
+//! # Examples
+//!
+//! To connect to a remote server:
+//!
+//! ```rust
+//! use rustls_connector::RustlsConnector;
+//!
+//! use std::{
+//!     io::{Read, Write},
+//!     net::TcpStream,
+//! };
+//!
+//! let connector = RustlsConnector::default();
+//!
+//! let stream = TcpStream::connect("google.com:443").unwrap();
+//! let mut stream = connector.connect("google.com", stream).unwrap();
+//!
+//! stream.write_all(b"GET / HTTP/1.0\r\n\r\n").unwrap();
+//! let mut res = vec![];
+//! stream.read_to_end(&mut res).unwrap();
+//! println!("{}", String::from_utf8_lossy(&res));
+//! ```
 
 pub use rustls;
 pub use webpki;
@@ -103,9 +126,10 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 /// An error returned while performing the handshake
 #[derive(Debug)]
 pub enum HandshakeError<S: Read + Send + Sync + Write + 'static> {
-    /// We hit WouldBlock during handshake
+    /// We hit WouldBlock during handshake.
+    /// Note that this is not a critical failure, you should be able to call handshake again once the stream is ready to perform I/O.
     WouldBlock(MidHandshakeTlsStream<S>),
-    /// We hit a critical failure
+    /// We hit a critical failure.
     Failure(io::Error),
 }
 
