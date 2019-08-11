@@ -79,7 +79,7 @@ impl RustlsConnector {
 
     /// Connect to the given host
     pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, domain: &str, stream: S) -> Result<TlsStream<S>, HandshakeError<S>> {
-        let session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|()| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name: {}", domain))))?);
+        let session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|err| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name ({}): {}", err, domain))))?);
         MidHandshakeTlsStream { session, stream }.handshake()
     }
 }
