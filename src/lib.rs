@@ -37,8 +37,8 @@ pub use webpki_roots;
 use rustls::{ClientConfig, ClientSession, Session, StreamOwned};
 
 use std::{
-    fmt::{self, Debug},
     error::Error,
+    fmt::{self, Debug},
     io::{self, Read, Write},
     sync::Arc,
 };
@@ -54,7 +54,9 @@ pub struct RustlsConnector {
 impl Default for RustlsConnector {
     fn default() -> Self {
         let mut config = ClientConfig::new();
-        config.root_store.add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
         config.into()
     }
 }
@@ -78,8 +80,20 @@ impl RustlsConnector {
     }
 
     /// Connect to the given host
-    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(&self, domain: &str, stream: S) -> Result<TlsStream<S>, HandshakeError<S>> {
-        let session = ClientSession::new(&self.config, webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|err| HandshakeError::Failure(io::Error::new(io::ErrorKind::InvalidData, format!("Invalid domain name ({}): {}", err, domain))))?);
+    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(
+        &self,
+        domain: &str,
+        stream: S,
+    ) -> Result<TlsStream<S>, HandshakeError<S>> {
+        let session = ClientSession::new(
+            &self.config,
+            webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|err| {
+                HandshakeError::Failure(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("Invalid domain name ({}): {}", err, domain),
+                ))
+            })?,
+        );
         MidHandshakeTlsStream { session, stream }.handshake()
     }
 }
@@ -88,7 +102,7 @@ impl RustlsConnector {
 #[derive(Debug)]
 pub struct MidHandshakeTlsStream<S: Read + Write> {
     session: ClientSession,
-    stream:  S,
+    stream: S,
 }
 
 impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
@@ -137,7 +151,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for Handshake
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => write!(f, "WouldBlock hit during handshake"),
-            HandshakeError::Failure(err)  => write!(f, "IO error: {}", err),
+            HandshakeError::Failure(err) => write!(f, "IO error: {}", err),
         }
     }
 }
@@ -146,7 +160,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> Error for HandshakeError<S
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             HandshakeError::Failure(err) => Some(err),
-            _                            => None,
+            _ => None,
         }
     }
 }
