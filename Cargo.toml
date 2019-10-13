@@ -21,7 +21,7 @@ quic                    = [ "rustls/quic" ]
 [dependencies]
 rustls       = "^0.16"
 webpki       = "^0.21"
-webpki-roots = "^0.17"
+webpki-roots = "^0.18"
 
 [badges]
 travis-ci = { repository = "Keruspe/rustls-connector" }
