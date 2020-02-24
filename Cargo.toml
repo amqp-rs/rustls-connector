@@ -19,7 +19,7 @@ dangerous_configuration = [ "rustls/dangerous_configuration" ]
 quic                    = [ "rustls/quic" ]
 
 [dependencies]
-rustls       = "^0.16"
+rustls       = "^0.17"
 webpki       = "^0.21"
 webpki-roots = "^0.19"
 
