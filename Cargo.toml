@@ -16,12 +16,21 @@ name = "rustls_connector"
 [features]
 default                 = []
 dangerous_configuration = [ "rustls/dangerous_configuration" ]
+native_certs            = [ "rustls-native-certs" ]
 quic                    = [ "rustls/quic" ]
 
 [dependencies]
+log          = "^0.4"
 rustls       = "^0.17"
 webpki       = "^0.21"
 webpki-roots = "^0.19"
+
+[dependencies.rustls-native-certs]
+version  = "^0.3"
+optional = true
+
+[package.metadata.docs.rs]
+all-features = true
 
 [badges]
 travis-ci = { repository = "Keruspe/rustls-connector" }

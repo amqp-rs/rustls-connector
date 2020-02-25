@@ -19,6 +19,7 @@
 //!     net::TcpStream,
 //! };
 //!
+//! // let connector = RustlsConnector::new_with_system_certs().unwrap();
 //! let connector = RustlsConnector::default();
 //!
 //! let stream = TcpStream::connect("google.com:443").unwrap();
@@ -31,9 +32,12 @@
 //! ```
 
 pub use rustls;
+#[cfg(feature = "system_certs")]
+pub use rustls_system_certs;
 pub use webpki;
 pub use webpki_roots;
 
+use log::warn;
 use rustls::{ClientConfig, ClientSession, Session, StreamOwned};
 
 use std::{
@@ -77,6 +81,25 @@ impl RustlsConnector {
     /// Create a new RustlsConnector from the given ClientConfig
     pub fn new(config: ClientConfig) -> Self {
         config.into()
+    }
+
+    #[cfg(feature = "system_certs")]
+    /// Create a new RustlsConnector using the system certs (requires system_certs feature enabled)
+    pub fn new_with_system_certs() -> io::Result<Self> {
+        let mut config = ClientConfig::new();
+        config.root_store =
+            rustls_native_certs::load_native_certs().or_else(|(partial_root_store, error)| {
+                partial_root_store
+                    .map(|store| {
+                        warn!(
+                            "Got error while importing some native certificates: {:?}",
+                            error
+                        );
+                        store
+                    })
+                    .ok_or(error)
+            })?;
+        Ok(config.into())
     }
 
     /// Connect to the given host
