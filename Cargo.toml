@@ -14,19 +14,23 @@ license       = "BSD-2-Clause"
 name = "rustls_connector"
 
 [features]
-default                 = []
-dangerous_configuration = [ "rustls/dangerous_configuration" ]
-native_certs            = [ "rustls-native-certs" ]
-quic                    = [ "rustls/quic" ]
+default                 = ["native-certs"]
+dangerous-configuration = ["rustls/dangerous_configuration"]
+native-certs            = ["rustls-native-certs"]
+quic                    = ["rustls/quic"]
+webpki-roots-certs      = ["webpki-roots"]
 
 [dependencies]
-log          = "^0.4"
-rustls       = "^0.17"
-webpki       = "^0.21"
-webpki-roots = "^0.19"
+log    = "^0.4"
+rustls = "^0.17"
+webpki = "^0.21"
 
 [dependencies.rustls-native-certs]
 version  = "^0.3"
+optional = true
+
+[dependencies.webpki-roots]
+version  = "^0.19"
 optional = true
 
 [package.metadata.docs.rs]

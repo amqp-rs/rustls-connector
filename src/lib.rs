@@ -11,7 +11,7 @@
 //!
 //! To connect to a remote server:
 //!
-//! ```rust
+//! ```rust, no_run
 //! use rustls_connector::RustlsConnector;
 //!
 //! use std::{
@@ -19,9 +19,7 @@
 //!     net::TcpStream,
 //! };
 //!
-//! // let connector = RustlsConnector::new_with_native_certs().unwrap();
-//! let connector = RustlsConnector::default();
-//!
+//! let connector = RustlsConnector::new_with_native_certs().unwrap();
 //! let stream = TcpStream::connect("google.com:443").unwrap();
 //! let mut stream = connector.connect("google.com", stream).unwrap();
 //!
@@ -32,9 +30,10 @@
 //! ```
 
 pub use rustls;
-#[cfg(feature = "native_certs")]
+#[cfg(feature = "native-certs")]
 pub use rustls_native_certs;
 pub use webpki;
+#[cfg(feature = "webpki-roots-certs")]
 pub use webpki_roots;
 
 use log::warn;
@@ -57,11 +56,7 @@ pub struct RustlsConnector {
 
 impl Default for RustlsConnector {
     fn default() -> Self {
-        let mut config = ClientConfig::new();
-        config
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        config.into()
+        ClientConfig::new().into()
     }
 }
 
@@ -83,8 +78,18 @@ impl RustlsConnector {
         config.into()
     }
 
-    #[cfg(feature = "native_certs")]
-    /// Create a new RustlsConnector using the system certs (requires native_certs feature enabled)
+    #[cfg(feature = "webpki-roots-certs")]
+    /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
+    pub fn new_with_webpki_roots_certs() -> Self {
+        let mut config = ClientConfig::new();
+        config
+            .root_store
+            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
+        config.into()
+    }
+
+    #[cfg(feature = "native-certs")]
+    /// Create a new RustlsConnector using the system certs (requires native-certs feature enabled)
     pub fn new_with_native_certs() -> io::Result<Self> {
         let mut config = ClientConfig::new();
         config.root_store =
