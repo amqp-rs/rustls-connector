@@ -161,7 +161,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
 
 impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "MidHandshakeTlsStream")
+        f.write_str("MidHandshakeTlsStream")
     }
 }
 
@@ -178,8 +178,8 @@ pub enum HandshakeError<S: Read + Send + Sync + Write + 'static> {
 impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HandshakeError::WouldBlock(_) => write!(f, "WouldBlock hit during handshake"),
-            HandshakeError::Failure(err) => write!(f, "IO error: {}", err),
+            HandshakeError::WouldBlock(_) => f.write_str("WouldBlock hit during handshake"),
+            HandshakeError::Failure(err) => f.write_fmt(format_args!("IO error: {}", err)),
         }
     }
 }
