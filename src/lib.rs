@@ -140,7 +140,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
     }
 
     /// Get a mutable reference to the inner stream
-    pub fn get_mut(&mut self) -> &S {
+    pub fn get_mut(&mut self) -> &mut S {
         &mut self.stream
     }
 
