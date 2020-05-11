@@ -43,36 +43,17 @@ use std::{
     error::Error,
     fmt::{self, Debug},
     io::{self, Read, Write},
+    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
 /// A TLS stream
 pub type TlsStream<S> = StreamOwned<ClientSession, S>;
 
-/// The connector
-pub struct RustlsConnector {
-    config: Arc<ClientConfig>,
-}
+/// Configuration helper for RustlsConnector
+pub struct RustlsConnectorConfig(ClientConfig);
 
-impl Default for RustlsConnector {
-    fn default() -> Self {
-        ClientConfig::new().into()
-    }
-}
-
-impl From<ClientConfig> for RustlsConnector {
-    fn from(config: ClientConfig) -> Self {
-        Arc::new(config).into()
-    }
-}
-
-impl From<Arc<ClientConfig>> for RustlsConnector {
-    fn from(config: Arc<ClientConfig>) -> Self {
-        Self { config }
-    }
-}
-
-impl RustlsConnector {
+impl RustlsConnectorConfig {
     /// Create a new RustlsConnector from the given ClientConfig
     pub fn new(config: ClientConfig) -> Self {
         config.into()
@@ -106,6 +87,73 @@ impl RustlsConnector {
             })?;
         Ok(config.into())
     }
+}
+
+impl Default for RustlsConnectorConfig {
+    fn default() -> Self {
+        ClientConfig::new().into()
+    }
+}
+
+impl From<ClientConfig> for RustlsConnectorConfig {
+    fn from(config: ClientConfig) -> Self {
+        Self(config)
+    }
+}
+
+impl Deref for RustlsConnectorConfig {
+    type Target = ClientConfig;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for RustlsConnectorConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
+/// The connector
+pub struct RustlsConnector(Arc<ClientConfig>);
+
+impl Default for RustlsConnector {
+    fn default() -> Self {
+        RustlsConnectorConfig::default().into()
+    }
+}
+
+impl From<RustlsConnectorConfig> for RustlsConnector {
+    fn from(config: RustlsConnectorConfig) -> Self {
+        config.0.into()
+    }
+}
+
+impl From<ClientConfig> for RustlsConnector {
+    fn from(config: ClientConfig) -> Self {
+        Arc::new(config).into()
+    }
+}
+
+impl From<Arc<ClientConfig>> for RustlsConnector {
+    fn from(config: Arc<ClientConfig>) -> Self {
+        Self(config)
+    }
+}
+
+impl RustlsConnector {
+    #[cfg(feature = "webpki-roots-certs")]
+    /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
+    pub fn new_with_webpki_roots_certs() -> Self {
+        RustlsConnectorConfig::new_with_webpki_roots_certs().into()
+    }
+
+    #[cfg(feature = "native-certs")]
+    /// Create a new RustlsConnector using the system certs (requires native-certs feature enabled)
+    pub fn new_with_native_certs() -> io::Result<Self> {
+        Ok(RustlsConnectorConfig::new_with_native_certs()?.into())
+    }
 
     /// Connect to the given host
     pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(
@@ -114,7 +162,7 @@ impl RustlsConnector {
         stream: S,
     ) -> Result<TlsStream<S>, HandshakeError<S>> {
         let session = ClientSession::new(
-            &self.config,
+            &self.0,
             webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|err| {
                 HandshakeError::Failure(io::Error::new(
                     io::ErrorKind::InvalidData,
