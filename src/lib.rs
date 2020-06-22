@@ -51,6 +51,7 @@ use std::{
 pub type TlsStream<S> = StreamOwned<ClientSession, S>;
 
 /// Configuration helper for RustlsConnector
+#[derive(Clone)]
 pub struct RustlsConnectorConfig(ClientConfig);
 
 impl RustlsConnectorConfig {
@@ -116,6 +117,7 @@ impl DerefMut for RustlsConnectorConfig {
 }
 
 /// The connector
+#[derive(Clone)]
 pub struct RustlsConnector(Arc<ClientConfig>);
 
 impl Default for RustlsConnector {
