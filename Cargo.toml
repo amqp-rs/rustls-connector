@@ -30,7 +30,7 @@ version  = "^0.3"
 optional = true
 
 [dependencies.webpki-roots]
-version  = "^0.19"
+version  = "^0.20"
 optional = true
 
 [package.metadata.docs.rs]
