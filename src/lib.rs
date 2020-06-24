@@ -197,7 +197,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
     /// Retry the handshake
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         if let Err(e) = self.session.complete_io(&mut self.stream) {
-            if [io::ErrorKind::WouldBlock, io::ErrorKind::NotConnected].contains(&e.kind()) {
+            if e.kind() == io::ErrorKind::WouldBlock {
                 if self.session.is_handshaking() {
                     return Err(HandshakeError::WouldBlock(self));
                 }
