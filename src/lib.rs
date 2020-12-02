@@ -50,18 +50,19 @@ use std::{
 /// A TLS stream
 pub type TlsStream<S> = StreamOwned<ClientSession, S>;
 
-/// Configuration helper for RustlsConnector
+/// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
 pub struct RustlsConnectorConfig(ClientConfig);
 
 impl RustlsConnectorConfig {
-    /// Create a new RustlsConnector from the given ClientConfig
+    /// Create a new [`RustlsConnector`] from the given [`ClientConfig`]
+    #[must_use]
     pub fn new(config: ClientConfig) -> Self {
         config.into()
     }
 
     #[cfg(feature = "webpki-roots-certs")]
-    /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
+    /// Create a new [`RustlsConnector`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
         let mut config = ClientConfig::new();
         config
@@ -71,7 +72,11 @@ impl RustlsConnectorConfig {
     }
 
     #[cfg(feature = "native-certs")]
-    /// Create a new RustlsConnector using the system certs (requires native-certs feature enabled)
+    /// Create a new [`RustlsConnector`] using the system certs (requires native-certs feature enabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
         let mut config = ClientConfig::new();
         config.root_store =
@@ -152,12 +157,21 @@ impl RustlsConnector {
     }
 
     #[cfg(feature = "native-certs")]
-    /// Create a new RustlsConnector using the system certs (requires native-certs feature enabled)
+    /// Create a new [`RustlsConnector`] using the system certs (requires native-certs feature enabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
         Ok(RustlsConnectorConfig::new_with_native_certs()?.into())
     }
 
     /// Connect to the given host
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
+    /// failure when we couldn't complete the hanshake
     pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(
         &self,
         domain: &str,
@@ -195,6 +209,11 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
     }
 
     /// Retry the handshake
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
+    /// failure when we couldn't complete the hanshake
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         if let Err(e) = self.session.complete_io(&mut self.stream) {
             if e.kind() == io::ErrorKind::WouldBlock {
