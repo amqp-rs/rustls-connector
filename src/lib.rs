@@ -44,7 +44,6 @@ use std::{
     error::Error,
     fmt::{self, Debug},
     io::{self, Read, Write},
-    ops::{Deref, DerefMut},
     sync::Arc,
 };
 
@@ -118,20 +117,6 @@ impl Default for RustlsConnectorConfig {
 impl From<ClientConfig> for RustlsConnectorConfig {
     fn from(config: ClientConfig) -> Self {
         Self(config)
-    }
-}
-
-impl Deref for RustlsConnectorConfig {
-    type Target = ClientConfig;
-
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for RustlsConnectorConfig {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
     }
 }
 
