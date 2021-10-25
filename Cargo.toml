@@ -22,16 +22,15 @@ webpki-roots-certs      = ["webpki-roots"]
 
 [dependencies]
 log    = "^0.4"
-rustls = "^0.19"
-webpki = "^0.21"
+rustls = "^0.20"
+webpki = "^0.22"
 
 [dependencies.rustls-native-certs]
-version  = "^0.5"
+version  = "^0.6"
 optional = true
-features = ["rustls"]
 
 [dependencies.webpki-roots]
-version  = "^0.21"
+version  = "^0.22"
 optional = true
 
 [package.metadata.docs.rs]

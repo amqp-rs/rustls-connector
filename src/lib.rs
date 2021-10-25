@@ -37,9 +37,10 @@ pub use webpki;
 pub use webpki_roots;
 
 use log::warn;
-use rustls::{ClientConfig, ClientSession, Session, StreamOwned};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerName, StreamOwned};
 
 use std::{
+    convert::TryFrom,
     error::Error,
     fmt::{self, Debug},
     io::{self, Read, Write},
@@ -48,7 +49,7 @@ use std::{
 };
 
 /// A TLS stream
-pub type TlsStream<S> = StreamOwned<ClientSession, S>;
+pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 
 /// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
@@ -64,11 +65,19 @@ impl RustlsConnectorConfig {
     #[cfg(feature = "webpki-roots-certs")]
     /// Create a new [`RustlsConnector`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
-        let mut config = ClientConfig::new();
-        config
-            .root_store
-            .add_server_trust_anchors(&webpki_roots::TLS_SERVER_ROOTS);
-        config.into()
+        let mut root_store = RootCertStore::empty();
+        root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
+            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
+                ta.subject,
+                ta.spki,
+                ta.name_constraints,
+            )
+        }));
+        ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+            .into()
     }
 
     #[cfg(feature = "native-certs")]
@@ -78,26 +87,31 @@ impl RustlsConnectorConfig {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        let mut config = ClientConfig::new();
-        config.root_store =
-            rustls_native_certs::load_native_certs().or_else(|(partial_root_store, error)| {
-                partial_root_store
-                    .map(|store| {
-                        warn!(
-                            "Got error while importing some native certificates: {:?}",
-                            error
-                        );
-                        store
-                    })
-                    .ok_or(error)
-            })?;
-        Ok(config.into())
+        let mut root_store = rustls::RootCertStore::empty();
+        for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs")
+        {
+            if let Err(err) = root_store.add(&rustls::Certificate(cert.0)) {
+                warn!(
+                    "Got error while importing some native certificates: {:?}",
+                    err
+                );
+            }
+        }
+        Ok(ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(root_store)
+            .with_no_client_auth()
+            .into())
     }
 }
 
 impl Default for RustlsConnectorConfig {
     fn default() -> Self {
-        ClientConfig::new().into()
+        ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(RootCertStore::empty())
+            .with_no_client_auth()
+            .into()
     }
 }
 
@@ -177,15 +191,16 @@ impl RustlsConnector {
         domain: &str,
         stream: S,
     ) -> Result<TlsStream<S>, HandshakeError<S>> {
-        let session = ClientSession::new(
-            &self.0,
-            webpki::DNSNameRef::try_from_ascii_str(domain).map_err(|err| {
+        let session = ClientConnection::new(
+            self.0.clone(),
+            ServerName::try_from(domain).map_err(|err| {
                 HandshakeError::Failure(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("Invalid domain name ({}): {}", err, domain),
+                    format!("Invalid domain name ({:?}): {}", err, domain),
                 ))
             })?,
-        );
+        )
+        .map_err(|err| io::Error::new(io::ErrorKind::ConnectionAborted, err))?;
         MidHandshakeTlsStream { session, stream }.handshake()
     }
 }
@@ -193,7 +208,7 @@ impl RustlsConnector {
 /// A TLS stream which has been interrupted during the handshake
 #[derive(Debug)]
 pub struct MidHandshakeTlsStream<S: Read + Write> {
-    session: ClientSession,
+    session: ClientConnection,
     stream: S,
 }
 
