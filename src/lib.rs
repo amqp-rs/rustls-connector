@@ -37,7 +37,9 @@ pub use webpki;
 pub use webpki_roots;
 
 use log::warn;
-use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerName, StreamOwned};
+use rustls::{
+    Certificate, ClientConfig, ClientConnection, PrivateKey, RootCertStore, ServerName, StreamOwned,
+};
 
 use std::{
     convert::TryFrom,
@@ -89,13 +91,41 @@ impl RustlsConnectorConfig {
         Ok(Self(root_store))
     }
 
-    /// Create a new [`RustlsConnector`] from this config
-    pub fn connector(self) -> RustlsConnector {
+    /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
+    ///
+    /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
+    ///
+    /// Returns the number of certificates added, and the number that were ignored.
+    pub fn add_parsable_certificates(&mut self, der_certs: &[Vec<u8>]) -> (usize, usize) {
+        self.0.add_parsable_certificates(der_certs)
+    }
+
+    /// Create a new [`RustlsConnector`] from this config and no client certificate
+    pub fn connector_with_no_client_auth(self) -> RustlsConnector {
         ClientConfig::builder()
             .with_safe_defaults()
             .with_root_certificates(self.0)
             .with_no_client_auth()
             .into()
+    }
+
+    /// Create a new [`RustlsConnector`] from this config and the given client certificate
+    ///
+    /// cert_chain is a vector of DER-encoded certificates. key_der is a DER-encoded RSA, ECDSA, or
+    /// Ed25519 private key.
+    ///
+    /// This function fails if key_der is invalid.
+    pub fn connector_with_single_cert(
+        self,
+        cert_chain: Vec<Certificate>,
+        key_der: PrivateKey,
+    ) -> io::Result<RustlsConnector> {
+        Ok(ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(self.0)
+            .with_single_cert(cert_chain, key_der)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
+            .into())
     }
 }
 
@@ -111,7 +141,7 @@ pub struct RustlsConnector(Arc<ClientConfig>);
 
 impl Default for RustlsConnector {
     fn default() -> Self {
-        RustlsConnectorConfig::default().connector()
+        RustlsConnectorConfig::default().connector_with_no_client_auth()
     }
 }
 
@@ -131,7 +161,7 @@ impl RustlsConnector {
     #[cfg(feature = "webpki-roots-certs")]
     /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
-        RustlsConnectorConfig::new_with_webpki_roots_certs().connector()
+        RustlsConnectorConfig::new_with_webpki_roots_certs().connector_with_no_client_auth()
     }
 
     #[cfg(feature = "native-certs")]
@@ -141,7 +171,7 @@ impl RustlsConnector {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        Ok(RustlsConnectorConfig::new_with_native_certs()?.connector())
+        Ok(RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth())
     }
 
     /// Connect to the given host
