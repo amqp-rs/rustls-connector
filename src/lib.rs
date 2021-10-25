@@ -52,17 +52,11 @@ pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 
 /// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
-pub struct RustlsConnectorConfig(ClientConfig);
+pub struct RustlsConnectorConfig(RootCertStore);
 
 impl RustlsConnectorConfig {
-    /// Create a new [`RustlsConnector`] from the given [`ClientConfig`]
-    #[must_use]
-    pub fn new(config: ClientConfig) -> Self {
-        config.into()
-    }
-
     #[cfg(feature = "webpki-roots-certs")]
-    /// Create a new [`RustlsConnector`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
+    /// Create a new [`RustlsConnectorConfig`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
         let mut root_store = RootCertStore::empty();
         root_store.add_server_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.0.iter().map(|ta| {
@@ -72,15 +66,11 @@ impl RustlsConnectorConfig {
                 ta.name_constraints,
             )
         }));
-        ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_store)
-            .with_no_client_auth()
-            .into()
+        Self(root_store)
     }
 
     #[cfg(feature = "native-certs")]
-    /// Create a new [`RustlsConnector`] using the system certs (requires native-certs feature enabled)
+    /// Create a new [`RustlsConnectorConfig`] using the system certs (requires native-certs feature enabled)
     ///
     /// # Errors
     ///
@@ -96,27 +86,22 @@ impl RustlsConnectorConfig {
                 );
             }
         }
-        Ok(ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(root_store)
-            .with_no_client_auth()
-            .into())
+        Ok(Self(root_store))
     }
-}
 
-impl Default for RustlsConnectorConfig {
-    fn default() -> Self {
+    /// Create a new [`RustlsConnector`] from this config
+    pub fn connector(self) -> RustlsConnector {
         ClientConfig::builder()
             .with_safe_defaults()
-            .with_root_certificates(RootCertStore::empty())
+            .with_root_certificates(self.0)
             .with_no_client_auth()
             .into()
     }
 }
 
-impl From<ClientConfig> for RustlsConnectorConfig {
-    fn from(config: ClientConfig) -> Self {
-        Self(config)
+impl Default for RustlsConnectorConfig {
+    fn default() -> Self {
+        Self(RootCertStore::empty())
     }
 }
 
@@ -126,13 +111,7 @@ pub struct RustlsConnector(Arc<ClientConfig>);
 
 impl Default for RustlsConnector {
     fn default() -> Self {
-        RustlsConnectorConfig::default().into()
-    }
-}
-
-impl From<RustlsConnectorConfig> for RustlsConnector {
-    fn from(config: RustlsConnectorConfig) -> Self {
-        config.0.into()
+        RustlsConnectorConfig::default().connector()
     }
 }
 
@@ -152,7 +131,7 @@ impl RustlsConnector {
     #[cfg(feature = "webpki-roots-certs")]
     /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
-        RustlsConnectorConfig::new_with_webpki_roots_certs().into()
+        RustlsConnectorConfig::new_with_webpki_roots_certs().connector()
     }
 
     #[cfg(feature = "native-certs")]
@@ -162,7 +141,7 @@ impl RustlsConnector {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        Ok(RustlsConnectorConfig::new_with_native_certs()?.into())
+        Ok(RustlsConnectorConfig::new_with_native_certs()?.connector())
     }
 
     /// Connect to the given host
