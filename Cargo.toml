@@ -2,13 +2,14 @@
 name          = "rustls-connector"
 version       = "0.15.0" # remember to update html_root_url
 authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
-edition       = "2018"
+edition       = "2021"
 description   = "Connector similar to openssl or native-tls for rustls"
 repository    = "https://github.com/Keruspe/rustls-connector"
 documentation = "https://docs.rs/rustls-connector"
 keywords      = ["tls", "rustls"]
 categories    = ["network-programming"]
 license       = "BSD-2-Clause"
+rust-version  = "1.56.0"
 
 [lib]
 name = "rustls_connector"
