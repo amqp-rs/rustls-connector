@@ -4,7 +4,7 @@ version       = "0.16.0" # remember to update html_root_url
 authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 edition       = "2021"
 description   = "Connector similar to openssl or native-tls for rustls"
-repository    = "https://github.com/Keruspe/rustls-connector"
+repository    = "https://github.com/amqp-rs/rustls-connector"
 documentation = "https://docs.rs/rustls-connector"
 keywords      = ["tls", "rustls"]
 categories    = ["network-programming"]
@@ -38,5 +38,4 @@ optional = true
 all-features = true
 
 [badges]
-travis-ci = { repository = "Keruspe/rustls-connector" }
-appveyor  = { repository = "Keruspe/rustls-connector" }
+maintenance = { status = "actively-developed" }

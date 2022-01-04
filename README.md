@@ -1,7 +1,7 @@
 # rustls-connector
 
 [![API Docs](https://docs.rs/rustls-connector/badge.svg)](https://docs.rs/rustls-connector)
-[![Build status](https://github.com/Keruspe/rustls-connector/workflows/Build%20and%20test/badge.svg)](https://github.com/Keruspe/rustls-connector/actions)
+[![Build status](https://github.com/amqp-rs/rustls-connector/workflows/Build%20and%20test/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions)
 [![Downloads](https://img.shields.io/crates/d/rustls-connector.svg)](https://crates.io/crates/rustls-connector)
 
 ## Connector similar to openssl or native-tls for rustls
