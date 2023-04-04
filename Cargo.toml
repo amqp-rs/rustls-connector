@@ -23,8 +23,8 @@ webpki-roots-certs      = ["webpki-roots"]
 
 [dependencies]
 log    = "^0.4"
-rustls = "^0.20"
-webpki = "^0.22"
+rustls = "^0.21"
+rustls-webpki = "^0.100"
 
 [dependencies.rustls-native-certs]
 version  = "^0.6"
