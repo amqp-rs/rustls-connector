@@ -17,14 +17,17 @@ name = "rustls_connector"
 [features]
 default                 = ["native-certs"]
 dangerous-configuration = ["rustls/dangerous_configuration"]
-native-certs            = ["rustls-native-certs"]
+native-certs            = ["rustls-native-certs", "log"]
 quic                    = ["rustls/quic"]
 webpki-roots-certs      = ["webpki-roots"]
 
 [dependencies]
-log    = "^0.4"
 rustls = "^0.21"
 rustls-webpki = "^0.101"
+
+[dependencies.log]
+version  = "^0.4"
+optional = true
 
 [dependencies.rustls-native-certs]
 version  = "^0.6"

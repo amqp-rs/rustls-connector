@@ -36,7 +36,6 @@ pub use webpki;
 #[cfg(feature = "webpki-roots-certs")]
 pub use webpki_roots;
 
-use log::warn;
 use rustls::{
     Certificate, ClientConfig, ClientConnection, PrivateKey, RootCertStore, ServerName, StreamOwned,
 };
@@ -82,7 +81,7 @@ impl RustlsConnectorConfig {
         for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs")
         {
             if let Err(err) = root_store.add(&rustls::Certificate(cert.0)) {
-                warn!(
+                log::warn!(
                     "Got error while importing some native certificates: {:?}",
                     err
                 );
