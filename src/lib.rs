@@ -122,7 +122,7 @@ impl RustlsConnectorConfig {
         Ok(ClientConfig::builder()
             .with_safe_defaults()
             .with_root_certificates(self.0)
-            .with_single_cert(cert_chain, key_der)
+            .with_client_auth_cert(cert_chain, key_der)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
             .into())
     }

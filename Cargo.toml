@@ -34,7 +34,7 @@ version  = "^0.6"
 optional = true
 
 [dependencies.webpki-roots]
-version  = "^0.24"
+version  = "^0.25"
 optional = true
 
 [package.metadata.docs.rs]
