@@ -36,9 +36,8 @@ pub use webpki;
 #[cfg(feature = "webpki-roots-certs")]
 pub use webpki_roots;
 
-use rustls::{
-    Certificate, ClientConfig, ClientConnection, PrivateKey, RootCertStore, ServerName, StreamOwned,
-};
+use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
     convert::TryFrom,
@@ -59,15 +58,9 @@ impl RustlsConnectorConfig {
     #[cfg(feature = "webpki-roots-certs")]
     /// Create a new [`RustlsConnectorConfig`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
-        let mut root_store = RootCertStore::empty();
-        root_store.add_trust_anchors(webpki_roots::TLS_SERVER_ROOTS.iter().map(|ta| {
-            rustls::OwnedTrustAnchor::from_subject_spki_name_constraints(
-                ta.subject,
-                ta.spki,
-                ta.name_constraints,
-            )
-        }));
-        Self(root_store)
+        Self(RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+        })
     }
 
     #[cfg(feature = "native-certs")]
@@ -77,10 +70,10 @@ impl RustlsConnectorConfig {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        let mut root_store = rustls::RootCertStore::empty();
+        let mut root_store = RootCertStore::empty();
         for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs")
         {
-            if let Err(err) = root_store.add(&rustls::Certificate(cert.0)) {
+            if let Err(err) = root_store.add(cert) {
                 log::warn!(
                     "Got error while importing some native certificates: {:?}",
                     err
@@ -95,14 +88,16 @@ impl RustlsConnectorConfig {
     /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
     ///
     /// Returns the number of certificates added, and the number that were ignored.
-    pub fn add_parsable_certificates(&mut self, der_certs: &[Vec<u8>]) -> (usize, usize) {
+    pub fn add_parsable_certificates(
+        &mut self,
+        der_certs: Vec<CertificateDer<'_>>,
+    ) -> (usize, usize) {
         self.0.add_parsable_certificates(der_certs)
     }
 
     /// Create a new [`RustlsConnector`] from this config and no client certificate
     pub fn connector_with_no_client_auth(self) -> RustlsConnector {
         ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(self.0)
             .with_no_client_auth()
             .into()
@@ -116,11 +111,10 @@ impl RustlsConnectorConfig {
     /// This function fails if key_der is invalid.
     pub fn connector_with_single_cert(
         self,
-        cert_chain: Vec<Certificate>,
-        key_der: PrivateKey,
+        cert_chain: Vec<CertificateDer<'static>>,
+        key_der: PrivateKeyDer<'static>,
     ) -> io::Result<RustlsConnector> {
         Ok(ClientConfig::builder()
-            .with_safe_defaults()
             .with_root_certificates(self.0)
             .with_client_auth_cert(cert_chain, key_der)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
@@ -191,7 +185,7 @@ impl RustlsConnector {
                     io::ErrorKind::InvalidData,
                     format!("Invalid domain name ({:?}): {}", err, domain),
                 ))
-            })?,
+            })?.to_owned(),
         )
         .map_err(|err| io::Error::new(io::ErrorKind::ConnectionAborted, err))?;
         MidHandshakeTlsStream { session, stream }.handshake()

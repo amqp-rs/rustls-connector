@@ -15,26 +15,25 @@ rust-version  = "1.60.0"
 name = "rustls_connector"
 
 [features]
-default                 = ["native-certs"]
-dangerous-configuration = ["rustls/dangerous_configuration"]
-native-certs            = ["rustls-native-certs", "log"]
-quic                    = ["rustls/quic"]
-webpki-roots-certs      = ["webpki-roots"]
+default            = ["native-certs"]
+native-certs       = ["rustls-native-certs", "log"]
+webpki-roots-certs = ["webpki-roots"]
 
 [dependencies]
-rustls = "^0.21"
-rustls-webpki = "^0.101"
+rustls = "^0.22"
+rustls-pki-types = "^1.0"
+rustls-webpki = "^0.102"
 
 [dependencies.log]
 version  = "^0.4"
 optional = true
 
 [dependencies.rustls-native-certs]
-version  = "^0.6"
+version  = "^0.7"
 optional = true
 
 [dependencies.webpki-roots]
-version  = "^0.25"
+version  = "^0.26"
 optional = true
 
 [package.metadata.docs.rs]
