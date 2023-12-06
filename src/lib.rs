@@ -180,12 +180,14 @@ impl RustlsConnector {
     ) -> Result<TlsStream<S>, HandshakeError<S>> {
         let session = ClientConnection::new(
             self.0.clone(),
-            ServerName::try_from(domain).map_err(|err| {
-                HandshakeError::Failure(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!("Invalid domain name ({:?}): {}", err, domain),
-                ))
-            })?.to_owned(),
+            ServerName::try_from(domain)
+                .map_err(|err| {
+                    HandshakeError::Failure(io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("Invalid domain name ({:?}): {}", err, domain),
+                    ))
+                })?
+                .to_owned(),
         )
         .map_err(|err| io::Error::new(io::ErrorKind::ConnectionAborted, err))?;
         MidHandshakeTlsStream { session, stream }.handshake()
