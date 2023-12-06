@@ -21,7 +21,6 @@ webpki-roots-certs = ["webpki-roots"]
 
 [dependencies]
 rustls = "^0.22"
-rustls-pki-types = "^1.0"
 rustls-webpki = "^0.102"
 
 [dependencies.log]
@@ -31,6 +30,10 @@ optional = true
 [dependencies.rustls-native-certs]
 version  = "^0.7"
 optional = true
+
+[dependencies.rustls-pki-types]
+version  = "^1.0"
+features = ["alloc"]
 
 [dependencies.webpki-roots]
 version  = "^0.26"
