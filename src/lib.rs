@@ -32,6 +32,7 @@
 pub use rustls;
 #[cfg(feature = "native-certs")]
 pub use rustls_native_certs;
+pub use rustls_pki_types;
 pub use webpki;
 #[cfg(feature = "webpki-roots-certs")]
 pub use webpki_roots;
