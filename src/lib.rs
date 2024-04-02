@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![warn(rust_2018_idioms)]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
