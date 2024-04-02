@@ -39,7 +39,6 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
-    convert::TryFrom,
     error::Error,
     fmt::{self, Debug},
     io::{self, Read, Write},
