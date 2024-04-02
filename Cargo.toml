@@ -20,7 +20,7 @@ native-certs       = ["rustls-native-certs", "log"]
 webpki-roots-certs = ["webpki-roots"]
 
 [dependencies]
-rustls = "^0.22"
+rustls = "^0.23"
 rustls-webpki = "^0.102"
 
 [dependencies.log]
@@ -32,7 +32,7 @@ version  = "^0.7"
 optional = true
 
 [dependencies.rustls-pki-types]
-version  = "^1.0"
+version  = "^1.4"
 features = ["alloc"]
 
 [dependencies.webpki-roots]
