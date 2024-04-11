@@ -1,6 +1,4 @@
 #![deny(missing_docs)]
-#![warn(rust_2018_idioms)]
-#![doc(html_root_url = "https://docs.rs/rustls-connector/0.19.2/")]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
@@ -41,7 +39,6 @@ use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
-    convert::TryFrom,
     error::Error,
     fmt::{self, Debug},
     io::{self, Read, Write},
