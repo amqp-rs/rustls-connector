@@ -1,6 +1,6 @@
 [package]
 name          = "rustls-connector"
-version       = "0.20.0"
+version       = "0.21.0"
 authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 edition       = "2021"
 description   = "Connector similar to openssl or native-tls for rustls"
@@ -15,12 +15,17 @@ rust-version  = "1.60.0"
 name = "rustls_connector"
 
 [features]
-default            = ["native-certs"]
+default            = ["native-certs", "rustls--aws_lc_rs" ]
 native-certs       = ["rustls-native-certs", "log"]
 webpki-roots-certs = ["webpki-roots"]
 
+# rustls crypto providers. Choose at least one. Otherwise, runtime errors.
+# See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
+rustls--aws_lc_rs = ["rustls/aws_lc_rs"] # default, but doesn't build everywhere
+rustls--ring = ["rustls/ring"] # more compatible, (e.g., easily builds on Windows)
+
 [dependencies]
-rustls = "^0.23"
+rustls = { version = "^0.23", default-features = false, features = ["std"] }
 rustls-webpki = "^0.102"
 
 [dependencies.log]
