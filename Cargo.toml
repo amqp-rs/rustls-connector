@@ -25,12 +25,16 @@ rustls--aws_lc_rs = ["rustls/aws_lc_rs"] # default, but doesn't build everywhere
 rustls--ring = ["rustls/ring"] # more compatible, (e.g., easily builds on Windows)
 
 [dependencies]
-rustls = { version = "^0.23", default-features = false, features = ["std"] }
 rustls-webpki = "^0.102"
 
 [dependencies.log]
 version  = "^0.4"
 optional = true
+
+[dependencies.rustls]
+version          = "^0.23"
+default-features = false
+features         = ["std"]
 
 [dependencies.rustls-native-certs]
 version  = "^0.7"

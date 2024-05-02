@@ -9,6 +9,14 @@
 rustls-connector is a library aiming at simplifying using rustls as
 an alternative to openssl and native-tls
 
+## Warning about crypto backends
+
+A crypto implementation must be enabled in rustls using feature flags.
+We mimic what rustls does, providing one feature flag per implementation and enabling the same as rustls by default.
+Available options are:
+- `rustls--aws_lc_rs` (default)
+- `rustls--ring`
+
 ## Examples
 
 To connect to a remote server:
