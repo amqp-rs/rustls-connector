@@ -16,16 +16,14 @@ name = "rustls_connector"
 
 [features]
 default            = ["native-certs", "rustls--aws_lc_rs" ]
-native-certs       = ["rustls-native-certs", "log"]
-webpki-roots-certs = ["webpki-roots"]
+logging            = ["rustls/logging"]
+native-certs       = ["dep:log", "dep:rustls-native-certs"]
+webpki-roots-certs = ["dep:webpki-roots"]
 
 # rustls crypto providers. Choose at least one. Otherwise, runtime errors.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
 rustls--aws_lc_rs = ["rustls/aws_lc_rs"] # default, but doesn't build everywhere
 rustls--ring = ["rustls/ring"] # more compatible, (e.g., easily builds on Windows)
-
-[dependencies]
-rustls-webpki = "^0.102"
 
 [dependencies.log]
 version  = "^0.4"
@@ -34,15 +32,21 @@ optional = true
 [dependencies.rustls]
 version          = "^0.23"
 default-features = false
-features         = ["std"]
+features         = ["std", "tls12"]
 
 [dependencies.rustls-native-certs]
 version  = "^0.7"
 optional = true
 
 [dependencies.rustls-pki-types]
-version  = "^1.4"
-features = ["alloc"]
+version          = "^1.4"
+default-features = false
+features         = ["std"]
+
+[dependencies.rustls-webpki]
+version          = "^0.102"
+default-features = false
+features         = ["std"]
 
 [dependencies.webpki-roots]
 version  = "^0.26"
