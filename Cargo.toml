@@ -35,7 +35,7 @@ default-features = false
 features         = ["std", "tls12"]
 
 [dependencies.rustls-native-certs]
-version  = "^0.7"
+version  = "^0.7.3"
 optional = true
 
 [dependencies.rustls-pki-types]

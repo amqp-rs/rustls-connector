@@ -69,7 +69,7 @@ impl RustlsConnectorConfig {
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
         let mut root_store = RootCertStore::empty();
-        for cert in rustls_native_certs::load_native_certs().expect("could not load platform certs")
+        for cert in rustls_native_certs::load_native_certs()?
         {
             if let Err(err) = root_store.add(cert) {
                 log::warn!(
