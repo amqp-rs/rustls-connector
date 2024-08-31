@@ -15,7 +15,7 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [nightly, beta, stable, 1.74.0]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: Install latest ${{ matrix.rust }}
         uses: actions-rs/toolchain@v1
@@ -23,6 +23,14 @@ jobs:
             toolchain: ${{ matrix.rust }}
             profile: minimal
             override: true
+
+      - name: Install NASM for aws-lc-rs on Windows
+        if: runner.os == 'Windows'
+        uses: ilammy/setup-nasm@v1
+
+      - name: Install ninja-build tool for aws-lc-fips-sys on Windows
+        if: runner.os == 'Windows'
+        uses: seanmiddleditch/gha-setup-ninja@v5
 
       - name: Run cargo check
         uses: actions-rs/cargo@v1
