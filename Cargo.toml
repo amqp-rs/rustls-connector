@@ -9,7 +9,7 @@ documentation = "https://docs.rs/rustls-connector"
 keywords      = ["tls", "rustls"]
 categories    = ["network-programming"]
 license       = "BSD-2-Clause"
-rust-version  = "1.74.0"
+rust-version  = "1.78.0"
 
 [lib]
 name = "rustls_connector"
