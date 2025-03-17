@@ -57,7 +57,7 @@ impl RustlsConnectorConfig {
     /// Create a new [`RustlsConnectorConfig`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
         Self(RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.iter().cloned().collect(),
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
         })
     }
 
