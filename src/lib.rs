@@ -75,10 +75,7 @@ impl RustlsConnectorConfig {
         }
         for cert in certs_result.certs {
             if let Err(err) = root_store.add(cert) {
-                log::warn!(
-                    "Got error while importing some native certificates: {:?}",
-                    err
-                );
+                log::warn!("Got error while importing some native certificates: {err:?}");
             }
         }
         Ok(Self(root_store))
@@ -185,7 +182,7 @@ impl RustlsConnector {
                 .map_err(|err| {
                     HandshakeError::Failure(io::Error::new(
                         io::ErrorKind::InvalidData,
-                        format!("Invalid domain name ({:?}): {}", err, domain),
+                        format!("Invalid domain name ({err:?}): {domain}"),
                     ))
                 })?
                 .to_owned(),
@@ -253,7 +250,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for Handshake
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => f.write_str("WouldBlock hit during handshake"),
-            HandshakeError::Failure(err) => f.write_fmt(format_args!("IO error: {}", err)),
+            HandshakeError::Failure(err) => f.write_fmt(format_args!("IO error: {err}")),
         }
     }
 }
