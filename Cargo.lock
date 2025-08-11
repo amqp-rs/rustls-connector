@@ -398,7 +398,7 @@ dependencies = [
 
 [[package]]
 name = "rustls-connector"
-version = "0.21.7"
+version = "0.21.8"
 dependencies = [
  "log",
  "rustls",
