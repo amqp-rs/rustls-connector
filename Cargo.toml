@@ -2,14 +2,14 @@
 name          = "rustls-connector"
 version       = "0.21.8"
 authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
-edition       = "2021"
+edition       = "2024"
 description   = "Connector similar to openssl or native-tls for rustls"
 repository    = "https://github.com/amqp-rs/rustls-connector"
 documentation = "https://docs.rs/rustls-connector"
 keywords      = ["tls", "rustls"]
 categories    = ["network-programming"]
 license       = "BSD-2-Clause"
-rust-version  = "1.78.0"
+rust-version  = "1.85.0"
 
 [lib]
 name = "rustls_connector"
