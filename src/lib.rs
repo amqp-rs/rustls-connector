@@ -35,6 +35,8 @@ pub use webpki;
 #[cfg(feature = "webpki-roots-certs")]
 pub use webpki_roots;
 
+#[cfg(feature = "futures")]
+use futures_io::{AsyncRead, AsyncWrite};
 use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
@@ -47,6 +49,10 @@ use std::{
 
 /// A TLS stream
 pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
+
+#[cfg(feature = "futures")]
+/// An async TLS stream
+pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
@@ -178,18 +184,40 @@ impl RustlsConnector {
     ) -> Result<TlsStream<S>, HandshakeError<S>> {
         let session = ClientConnection::new(
             self.0.clone(),
-            ServerName::try_from(domain)
-                .map_err(|err| {
-                    HandshakeError::Failure(io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        format!("Invalid domain name ({err:?}): {domain}"),
-                    ))
-                })?
-                .to_owned(),
+            server_name(domain).map_err(HandshakeError::Failure)?,
         )
         .map_err(|err| io::Error::new(io::ErrorKind::ConnectionAborted, err))?;
         MidHandshakeTlsStream { session, stream }.handshake()
     }
+
+    #[cfg(feature = "futures")]
+    /// Connect to the given host asynchronously
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS hanshake
+    pub async fn connect_async<
+        S: Debug + AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
+    >(
+        &self,
+        domain: &str,
+        stream: S,
+    ) -> io::Result<AsyncTlsStream<S>> {
+        futures_rustls::TlsConnector::from(self.0.clone())
+            .connect(server_name(domain)?, stream)
+            .await
+    }
+}
+
+fn server_name(domain: &str) -> io::Result<ServerName<'static>> {
+    Ok(ServerName::try_from(domain)
+        .map_err(|err| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("Invalid domain name ({err:?}): {domain}"),
+            )
+        })?
+        .to_owned())
 }
 
 /// A TLS stream which has been interrupted during the handshake

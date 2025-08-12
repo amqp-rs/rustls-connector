@@ -16,14 +16,26 @@ name = "rustls_connector"
 
 [features]
 default            = ["native-certs", "rustls--aws_lc_rs" ]
-logging            = ["rustls/logging"]
+futures            = ["dep:futures-io", "dep:futures-rustls"]
+logging            = ["futures-rustls?/logging", "rustls/logging"]
+
 native-certs       = ["dep:log", "dep:rustls-native-certs"]
 webpki-roots-certs = ["dep:webpki-roots"]
 
 # rustls crypto providers. Choose at least one. Otherwise, runtime errors.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
-rustls--aws_lc_rs = ["rustls/aws_lc_rs"] # default, but doesn't build everywhere
-rustls--ring = ["rustls/ring"] # more compatible, (e.g., easily builds on Windows)
+rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs"] # default, but doesn't build everywhere
+rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)
+
+[dependencies.futures-io]
+version  = "^0.3"
+optional = true
+
+[dependencies.futures-rustls]
+version          = "^0.26"
+optional         = true
+default-features = false
+features         = ["tls12"]
 
 [dependencies.log]
 version  = "^0.4"
