@@ -42,7 +42,7 @@ use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
     error::Error,
-    fmt::{self, Debug},
+    fmt,
     io::{self, Read, Write},
     sync::Arc,
 };
@@ -177,7 +177,7 @@ impl RustlsConnector {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the hanshake
-    pub fn connect<S: Debug + Read + Send + Sync + Write + 'static>(
+    pub fn connect<S: Read + Write + Send + Sync + 'static>(
         &self,
         domain: &str,
         stream: S,
@@ -196,9 +196,7 @@ impl RustlsConnector {
     /// # Errors
     ///
     /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS hanshake
-    pub async fn connect_async<
-        S: Debug + AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static,
-    >(
+    pub async fn connect_async<S: AsyncRead + AsyncWrite + Send + Sync + Unpin + 'static>(
         &self,
         domain: &str,
         stream: S,
@@ -227,7 +225,7 @@ pub struct MidHandshakeTlsStream<S: Read + Write> {
     stream: S,
 }
 
-impl<S: Debug + Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
+impl<S: Read + Send + Sync + Write + 'static> MidHandshakeTlsStream<S> {
     /// Get a reference to the inner stream
     pub fn get_ref(&self) -> &S {
         &self.stream
@@ -265,8 +263,7 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 }
 
 /// An error returned while performing the handshake
-#[derive(Debug)]
-pub enum HandshakeError<S: Read + Send + Sync + Write + 'static> {
+pub enum HandshakeError<S: Read + Write + Send + Sync + 'static> {
     /// We hit WouldBlock during handshake.
     /// Note that this is not a critical failure, you should be able to call handshake again once the stream is ready to perform I/O.
     WouldBlock(Box<MidHandshakeTlsStream<S>>),
@@ -274,7 +271,7 @@ pub enum HandshakeError<S: Read + Send + Sync + Write + 'static> {
     Failure(io::Error),
 }
 
-impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for HandshakeError<S> {
+impl<S: Read + Write + Send + Sync + 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => f.write_str("WouldBlock hit during handshake"),
@@ -283,7 +280,18 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> fmt::Display for Handshake
     }
 }
 
-impl<S: Debug + Read + Send + Sync + Write + 'static> Error for HandshakeError<S> {
+impl<S: Read + Write + Send + Sync + 'static> fmt::Debug for HandshakeError<S> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut d = f.debug_tuple("HandshakeError");
+        match self {
+            HandshakeError::WouldBlock(_) => d.field(&"WouldBlock"),
+            HandshakeError::Failure(err) => d.field(&err),
+        }
+        .finish()
+    }
+}
+
+impl<S: Read + Write + Send + Sync + 'static> Error for HandshakeError<S> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             HandshakeError::Failure(err) => Some(err),
@@ -292,7 +300,7 @@ impl<S: Debug + Read + Send + Sync + Write + 'static> Error for HandshakeError<S
     }
 }
 
-impl<S: Debug + Read + Send + Sync + Write + 'static> From<io::Error> for HandshakeError<S> {
+impl<S: Read + Send + Sync + Write + 'static> From<io::Error> for HandshakeError<S> {
     fn from(err: io::Error) -> Self {
         HandshakeError::Failure(err)
     }
