@@ -85,9 +85,9 @@ dependencies = [
 
 [[package]]
 name = "cfg-if"
-version = "1.0.1"
+version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9555578bc9e57714c812a1f84e4fc5b4d21fcb063490c624de019f7464c91268"
+checksum = "9aeec81361cbe5564f44e79538fc112002f70a448966f9160591c2bd5706dfad"
 
 [[package]]
 name = "clang-sys"
@@ -415,7 +415,7 @@ dependencies = [
 
 [[package]]
 name = "rustls-connector"
-version = "0.21.12"
+version = "0.22.0"
 dependencies = [
  "futures-io",
  "futures-rustls",
