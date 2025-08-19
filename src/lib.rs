@@ -1,4 +1,5 @@
 #![deny(missing_docs)]
+#![allow(clippy::result_large_err, clippy::large_enum_variant)]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
@@ -246,7 +247,7 @@ impl<S: Read + Send + Write + 'static> MidHandshakeTlsStream<S> {
         if let Err(e) = self.session.complete_io(&mut self.stream) {
             if e.kind() == io::ErrorKind::WouldBlock {
                 if self.session.is_handshaking() {
-                    return Err(HandshakeError::WouldBlock(Box::new(self)));
+                    return Err(HandshakeError::WouldBlock(self));
                 }
             } else {
                 return Err(e.into());
@@ -266,7 +267,7 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 pub enum HandshakeError<S: Read + Write + Send + 'static> {
     /// We hit WouldBlock during handshake.
     /// Note that this is not a critical failure, you should be able to call handshake again once the stream is ready to perform I/O.
-    WouldBlock(Box<MidHandshakeTlsStream<S>>),
+    WouldBlock(MidHandshakeTlsStream<S>),
     /// We hit a critical failure.
     Failure(io::Error),
 }
