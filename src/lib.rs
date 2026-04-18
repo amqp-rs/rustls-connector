@@ -76,22 +76,12 @@ impl RustlsConnectorConfig {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        let mut root_store = RootCertStore::empty();
-        let certs_result = rustls_native_certs::load_native_certs();
-        for err in certs_result.errors {
-            log::warn!("Got error while loading some native certificates: {err:?}");
+        let mut config = Self::default();
+        let (_, ignored) = config.register_native_certs()?;
+        if ignored > 0 {
+            log::warn!("{ignored} platform CA root certificates were ignored due to errors");
         }
-        if certs_result.certs.is_empty() {
-            return Err(io::Error::other(
-                "Could not load any valid native certificates",
-            ));
-        }
-        for cert in certs_result.certs {
-            if let Err(err) = root_store.add(cert) {
-                log::warn!("Got error while importing some native certificates: {err:?}");
-            }
-        }
-        Ok(Self(root_store))
+        Ok(config)
     }
 
     /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
@@ -111,6 +101,26 @@ impl RustlsConnectorConfig {
     pub fn with_webpki_root_certs(mut self) -> Self {
         self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
         self
+    }
+
+    #[cfg(feature = "native-certs")]
+    /// Add the system certs (requires native-certs feature enabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to load the native certs.
+    pub fn register_native_certs(&mut self) -> io::Result<(usize, usize)> {
+        let certs_result = rustls_native_certs::load_native_certs();
+        for err in certs_result.errors {
+            log::warn!("Got error while loading some native certificates: {err:?}");
+        }
+        let (added, ignored) = self.add_parsable_certificates(certs_result.certs);
+        if self.0.is_empty() {
+            return Err(io::Error::other(
+                "Could not load any valid native certificates",
+            ));
+        }
+        Ok((added, ignored))
     }
 
     fn builder(self) -> ConfigBuilder<ClientConfig, WantsClientCert> {
