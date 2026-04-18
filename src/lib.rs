@@ -38,7 +38,10 @@ pub use webpki_roots;
 
 #[cfg(feature = "futures")]
 use futures_io::{AsyncRead, AsyncWrite};
-use rustls::{ClientConfig, ClientConnection, RootCertStore, StreamOwned};
+use rustls::{
+    ClientConfig, ClientConnection, ConfigBuilder, RootCertStore, StreamOwned,
+    client::WantsClientCert,
+};
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
@@ -105,12 +108,13 @@ impl RustlsConnectorConfig {
         self.0.add_parsable_certificates(der_certs)
     }
 
+    fn builder(self) -> ConfigBuilder<ClientConfig, WantsClientCert> {
+        ClientConfig::builder().with_root_certificates(self.0)
+    }
+
     /// Create a new [`RustlsConnector`] from this config and no client certificate
     pub fn connector_with_no_client_auth(self) -> RustlsConnector {
-        ClientConfig::builder()
-            .with_root_certificates(self.0)
-            .with_no_client_auth()
-            .into()
+        self.builder().with_no_client_auth().into()
     }
 
     /// Create a new [`RustlsConnector`] from this config and the given client certificate
@@ -124,8 +128,8 @@ impl RustlsConnectorConfig {
         cert_chain: Vec<CertificateDer<'static>>,
         key_der: PrivateKeyDer<'static>,
     ) -> io::Result<RustlsConnector> {
-        Ok(ClientConfig::builder()
-            .with_root_certificates(self.0)
+        Ok(self
+            .builder()
             .with_client_auth_cert(cert_chain, key_der)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
             .into())
