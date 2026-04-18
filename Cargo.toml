@@ -20,7 +20,7 @@ futures            = ["dep:futures-io", "dep:futures-rustls"]
 logging            = ["futures-rustls?/logging", "rustls/logging"]
 
 native-certs       = ["dep:log", "dep:rustls-native-certs"]
-webpki-roots-certs = ["dep:webpki-roots"]
+webpki-roots-certs = ["dep:webpki-root-certs"]
 
 # rustls crypto providers. Choose at least one. Otherwise, runtime errors.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
@@ -60,7 +60,7 @@ version          = "^0.103"
 default-features = false
 features         = ["std"]
 
-[dependencies.webpki-roots]
+[dependencies.webpki-root-certs]
 version  = "^1.0"
 optional = true
 

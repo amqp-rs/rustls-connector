@@ -34,7 +34,7 @@ pub use rustls_native_certs;
 pub use rustls_pki_types;
 pub use webpki;
 #[cfg(feature = "webpki-roots-certs")]
-pub use webpki_roots;
+pub use webpki_root_certs;
 
 #[cfg(feature = "futures")]
 use futures_io::{AsyncRead, AsyncWrite};
@@ -66,9 +66,7 @@ impl RustlsConnectorConfig {
     #[cfg(feature = "webpki-roots-certs")]
     /// Create a new [`RustlsConnectorConfig`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
     pub fn new_with_webpki_roots_certs() -> Self {
-        Self(RootCertStore {
-            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
-        })
+        Self::default().with_webpki_root_certs()
     }
 
     #[cfg(feature = "native-certs")]
@@ -101,11 +99,18 @@ impl RustlsConnectorConfig {
     /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
     ///
     /// Returns the number of certificates added, and the number that were ignored.
-    pub fn add_parsable_certificates(
+    pub fn add_parsable_certificates<'a>(
         &mut self,
-        der_certs: Vec<CertificateDer<'_>>,
+        der_certs: impl IntoIterator<Item = CertificateDer<'a>>,
     ) -> (usize, usize) {
         self.0.add_parsable_certificates(der_certs)
+    }
+
+    #[cfg(feature = "webpki-roots-certs")]
+    /// Add certs from webpki-root-certs (requires webpki-roots-certs feature enabled)
+    pub fn with_webpki_root_certs(mut self) -> Self {
+        self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+        self
     }
 
     fn builder(self) -> ConfigBuilder<ClientConfig, WantsClientCert> {
