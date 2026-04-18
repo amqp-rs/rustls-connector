@@ -33,7 +33,7 @@ pub use rustls;
 pub use rustls_native_certs;
 pub use rustls_pki_types;
 pub use webpki;
-#[cfg(feature = "webpki-roots-certs")]
+#[cfg(feature = "webpki-root-certs")]
 pub use webpki_root_certs;
 
 #[cfg(feature = "futures")]
@@ -65,9 +65,9 @@ pub struct RustlsConnectorConfig {
 }
 
 impl RustlsConnectorConfig {
-    #[cfg(feature = "webpki-roots-certs")]
-    /// Create a new [`RustlsConnectorConfig`] using the webpki-roots certs (requires webpki-roots-certs feature enabled)
-    pub fn new_with_webpki_roots_certs() -> Self {
+    #[cfg(feature = "webpki-root-certs")]
+    /// Create a new [`RustlsConnectorConfig`] using the webpki-root-certs (requires webpki-root-certs feature enabled)
+    pub fn new_with_webpki_root_certs() -> Self {
         Self::default().with_webpki_root_certs()
     }
 
@@ -98,8 +98,8 @@ impl RustlsConnectorConfig {
         self.store.add_parsable_certificates(der_certs)
     }
 
-    #[cfg(feature = "webpki-roots-certs")]
-    /// Add certs from webpki-root-certs (requires webpki-roots-certs feature enabled)
+    #[cfg(feature = "webpki-root-certs")]
+    /// Add certs from webpki-root-certs (requires webpki-root-certs feature enabled)
     pub fn with_webpki_root_certs(mut self) -> Self {
         self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
         self
@@ -184,10 +184,10 @@ impl From<Arc<ClientConfig>> for RustlsConnector {
 }
 
 impl RustlsConnector {
-    #[cfg(feature = "webpki-roots-certs")]
-    /// Create a new RustlsConnector using the webpki-roots certs (requires webpki-roots-certs feature enabled)
-    pub fn new_with_webpki_roots_certs() -> Self {
-        RustlsConnectorConfig::new_with_webpki_roots_certs().connector_with_no_client_auth()
+    #[cfg(feature = "webpki-root-certs")]
+    /// Create a new RustlsConnector using the webpki-root certs (requires webpki-root-certs feature enabled)
+    pub fn new_with_webpki_root_certs() -> Self {
+        RustlsConnectorConfig::new_with_webpki_root_certs().connector_with_no_client_auth()
     }
 
     #[cfg(feature = "native-certs")]

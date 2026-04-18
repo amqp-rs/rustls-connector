@@ -15,12 +15,12 @@ rust-version  = "1.87.0"
 name = "rustls_connector"
 
 [features]
-default            = ["native-certs", "rustls--aws_lc_rs" ]
-futures            = ["dep:futures-io", "dep:futures-rustls"]
-logging            = ["futures-rustls?/logging", "rustls/logging"]
+default           = ["native-certs", "rustls--aws_lc_rs" ]
+futures           = ["dep:futures-io", "dep:futures-rustls"]
+logging           = ["futures-rustls?/logging", "rustls/logging"]
 
-native-certs       = ["dep:log", "dep:rustls-native-certs"]
-webpki-roots-certs = ["dep:webpki-root-certs"]
+native-certs      = ["dep:log", "dep:rustls-native-certs"]
+webpki-root-certs = ["dep:webpki-root-certs"]
 
 # rustls crypto providers. Choose at least one. Otherwise, runtime errors.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
