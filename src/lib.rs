@@ -60,7 +60,9 @@ pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
-pub struct RustlsConnectorConfig(RootCertStore);
+pub struct RustlsConnectorConfig {
+    store: RootCertStore,
+}
 
 impl RustlsConnectorConfig {
     #[cfg(feature = "webpki-roots-certs")]
@@ -93,7 +95,7 @@ impl RustlsConnectorConfig {
         &mut self,
         der_certs: impl IntoIterator<Item = CertificateDer<'a>>,
     ) -> (usize, usize) {
-        self.0.add_parsable_certificates(der_certs)
+        self.store.add_parsable_certificates(der_certs)
     }
 
     #[cfg(feature = "webpki-roots-certs")]
@@ -115,7 +117,7 @@ impl RustlsConnectorConfig {
             log::warn!("Got error while loading some native certificates: {err:?}");
         }
         let (added, ignored) = self.add_parsable_certificates(certs_result.certs);
-        if self.0.is_empty() {
+        if self.store.is_empty() {
             return Err(io::Error::other(
                 "Could not load any valid native certificates",
             ));
@@ -124,7 +126,7 @@ impl RustlsConnectorConfig {
     }
 
     fn builder(self) -> ConfigBuilder<ClientConfig, WantsClientCert> {
-        ClientConfig::builder().with_root_certificates(self.0)
+        ClientConfig::builder().with_root_certificates(self.store)
     }
 
     /// Create a new [`RustlsConnector`] from this config and no client certificate
@@ -153,7 +155,9 @@ impl RustlsConnectorConfig {
 
 impl Default for RustlsConnectorConfig {
     fn default() -> Self {
-        Self(RootCertStore::empty())
+        Self {
+            store: RootCertStore::empty(),
+        }
     }
 }
 
