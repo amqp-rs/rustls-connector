@@ -29,7 +29,7 @@ use std::{
     net::TcpStream,
 };
 
-let connector = RustlsConnector::new_with_native_certs().unwrap();
+let connector = RustlsConnector::new_with_platform_verifier().unwrap();
 let stream = TcpStream::connect("google.com:443").unwrap();
 let mut stream = connector.connect("google.com", stream).unwrap();
 

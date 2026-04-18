@@ -15,17 +15,21 @@ rust-version  = "1.87.0"
 name = "rustls_connector"
 
 [features]
-default           = ["native-certs", "rustls--aws_lc_rs" ]
+default           = ["platform-verifier", "rustls--aws_lc_rs" ]
 futures           = ["dep:futures-io", "dep:futures-rustls"]
 logging           = ["futures-rustls?/logging", "rustls/logging"]
 
-native-certs      = ["dep:log", "dep:rustls-native-certs"]
+platform-verifier = ["dep:rustls-platform-verifier"]
+native-certs      = ["dep:rustls-native-certs"]
 webpki-root-certs = ["dep:webpki-root-certs"]
 
 # rustls crypto providers. Choose at least one. Otherwise, runtime errors.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
 rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs"] # default, but doesn't build everywhere
 rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)
+
+[dependencies]
+log = "^0.4"
 
 [dependencies.futures-io]
 version  = "^0.3"
@@ -36,10 +40,6 @@ version          = "^0.26"
 optional         = true
 default-features = false
 features         = ["tls12"]
-
-[dependencies.log]
-version  = "^0.4"
-optional = true
 
 [dependencies.rustls]
 version          = "^0.23.25"
@@ -54,6 +54,10 @@ optional = true
 version          = "^1.4"
 default-features = false
 features         = ["std"]
+
+[dependencies.rustls-platform-verifier]
+version  = "^0.7"
+optional = true
 
 [dependencies.rustls-webpki]
 version          = "^0.103"

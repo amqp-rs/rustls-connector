@@ -18,7 +18,7 @@
 //!     net::TcpStream,
 //! };
 //!
-//! let connector = RustlsConnector::new_with_native_certs().unwrap();
+//! let connector = RustlsConnector::new_with_platform_verifier().unwrap();
 //! let stream = TcpStream::connect("google.com:443").unwrap();
 //! let mut stream = connector.connect("google.com", stream).unwrap();
 //!
@@ -32,6 +32,8 @@ pub use rustls;
 #[cfg(feature = "native-certs")]
 pub use rustls_native_certs;
 pub use rustls_pki_types;
+#[cfg(feature = "platform-verifier")]
+pub use rustls_platform_verifier;
 pub use webpki;
 #[cfg(feature = "webpki-root-certs")]
 pub use webpki_root_certs;
@@ -61,7 +63,8 @@ pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 /// Configuration helper for [`RustlsConnector`]
 #[derive(Clone)]
 pub struct RustlsConnectorConfig {
-    store: RootCertStore,
+    store: Vec<CertificateDer<'static>>,
+    platform_verifier: bool,
 }
 
 impl RustlsConnectorConfig {
@@ -71,6 +74,12 @@ impl RustlsConnectorConfig {
         Self::default().with_webpki_root_certs()
     }
 
+    #[cfg(feature = "platform-verifier")]
+    /// Create a new [`RustlsConnectorConfig`] using the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    pub fn new_with_platform_verifier() -> Self {
+        Self::default().with_platform_verifier()
+    }
+
     #[cfg(feature = "native-certs")]
     /// Create a new [`RustlsConnectorConfig`] using the system certs (requires native-certs feature enabled)
     ///
@@ -78,30 +87,27 @@ impl RustlsConnectorConfig {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        let mut config = Self::default();
-        let (_, ignored) = config.register_native_certs()?;
-        if ignored > 0 {
-            log::warn!("{ignored} platform CA root certificates were ignored due to errors");
-        }
-        Ok(config)
+        Self::default().with_native_certs()
     }
 
     /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
     ///
     /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
-    ///
-    /// Returns the number of certificates added, and the number that were ignored.
-    pub fn add_parsable_certificates<'a>(
-        &mut self,
-        der_certs: impl IntoIterator<Item = CertificateDer<'a>>,
-    ) -> (usize, usize) {
-        self.store.add_parsable_certificates(der_certs)
+    pub fn add_parsable_certificates<'a>(&mut self, mut der_certs: Vec<CertificateDer<'static>>) {
+        self.store.append(&mut der_certs)
     }
 
     #[cfg(feature = "webpki-root-certs")]
     /// Add certs from webpki-root-certs (requires webpki-root-certs feature enabled)
     pub fn with_webpki_root_certs(mut self) -> Self {
-        self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+        self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.to_vec());
+        self
+    }
+
+    #[cfg(feature = "platform-verifier")]
+    /// Use the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    pub fn with_platform_verifier(mut self) -> Self {
+        self.platform_verifier = true;
         self
     }
 
@@ -111,27 +117,53 @@ impl RustlsConnectorConfig {
     /// # Errors
     ///
     /// Returns an error if we fail to load the native certs.
-    pub fn register_native_certs(&mut self) -> io::Result<(usize, usize)> {
+    pub fn with_native_certs(mut self) -> io::Result<Self> {
         let certs_result = rustls_native_certs::load_native_certs();
         for err in certs_result.errors {
             log::warn!("Got error while loading some native certificates: {err:?}");
         }
-        let (added, ignored) = self.add_parsable_certificates(certs_result.certs);
-        if self.store.is_empty() {
+        if certs_result.certs.is_empty() {
             return Err(io::Error::other(
                 "Could not load any valid native certificates",
             ));
         }
-        Ok((added, ignored))
+        self.add_parsable_certificates(certs_result.certs);
+        Ok(self)
     }
 
-    fn builder(self) -> ConfigBuilder<ClientConfig, WantsClientCert> {
-        ClientConfig::builder().with_root_certificates(self.store)
+    fn builder(self) -> io::Result<ConfigBuilder<ClientConfig, WantsClientCert>> {
+        let builder = ClientConfig::builder();
+        #[cfg(feature = "platform-verifier")]
+        {
+            if self.platform_verifier {
+                let verifier = rustls_platform_verifier::Verifier::new_with_extra_roots(
+                    self.store,
+                    builder.crypto_provider().clone(),
+                )
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                return Ok(builder
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(verifier)));
+            }
+        }
+        let mut store = RootCertStore::empty();
+        let (_, ignored) = store.add_parsable_certificates(self.store);
+        if ignored > 0 {
+            log::warn!("{ignored} platform CA root certificates were ignored due to errors");
+        }
+        if store.is_empty() {
+            return Err(io::Error::other("Could not load any valid certificates"));
+        }
+        Ok(builder.with_root_certificates(store))
     }
 
     /// Create a new [`RustlsConnector`] from this config and no client certificate
-    pub fn connector_with_no_client_auth(self) -> RustlsConnector {
-        self.builder().with_no_client_auth().into()
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to init our verifier
+    pub fn connector_with_no_client_auth(self) -> io::Result<RustlsConnector> {
+        Ok(self.builder()?.with_no_client_auth().into())
     }
 
     /// Create a new [`RustlsConnector`] from this config and the given client certificate
@@ -139,14 +171,16 @@ impl RustlsConnectorConfig {
     /// cert_chain is a vector of DER-encoded certificates. key_der is a DER-encoded RSA, ECDSA, or
     /// Ed25519 private key.
     ///
-    /// This function fails if key_der is invalid.
+    /// # Errors
+    ///
+    /// Returns an error if we fail to init our verifier or if key_der is invalid.
     pub fn connector_with_single_cert(
         self,
         cert_chain: Vec<CertificateDer<'static>>,
         key_der: PrivateKeyDer<'static>,
     ) -> io::Result<RustlsConnector> {
         Ok(self
-            .builder()
+            .builder()?
             .with_client_auth_cert(cert_chain, key_der)
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
             .into())
@@ -156,7 +190,8 @@ impl RustlsConnectorConfig {
 impl Default for RustlsConnectorConfig {
     fn default() -> Self {
         Self {
-            store: RootCertStore::empty(),
+            store: Vec::new(),
+            platform_verifier: false,
         }
     }
 }
@@ -167,7 +202,9 @@ pub struct RustlsConnector(Arc<ClientConfig>);
 
 impl Default for RustlsConnector {
     fn default() -> Self {
-        RustlsConnectorConfig::default().connector_with_no_client_auth()
+        RustlsConnectorConfig::default()
+            .connector_with_no_client_auth()
+            .expect("no error codepath for default RustlsConnectorConfig")
     }
 }
 
@@ -186,8 +223,22 @@ impl From<Arc<ClientConfig>> for RustlsConnector {
 impl RustlsConnector {
     #[cfg(feature = "webpki-root-certs")]
     /// Create a new RustlsConnector using the webpki-root certs (requires webpki-root-certs feature enabled)
-    pub fn new_with_webpki_root_certs() -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to init our verifier
+    pub fn new_with_webpki_root_certs() -> io::Result<Self> {
         RustlsConnectorConfig::new_with_webpki_root_certs().connector_with_no_client_auth()
+    }
+
+    #[cfg(feature = "platform-verifier")]
+    /// Create a new [`RustlsConnector`] using the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if we fail to init our verifier
+    pub fn new_with_platform_verifier() -> io::Result<Self> {
+        RustlsConnectorConfig::new_with_platform_verifier().connector_with_no_client_auth()
     }
 
     #[cfg(feature = "native-certs")]
@@ -197,7 +248,7 @@ impl RustlsConnector {
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn new_with_native_certs() -> io::Result<Self> {
-        Ok(RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth())
+        RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth()
     }
 
     /// Connect to the given host
