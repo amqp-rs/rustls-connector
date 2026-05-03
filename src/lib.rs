@@ -93,8 +93,16 @@ impl RustlsConnectorConfig {
     /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
     ///
     /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
-    pub fn add_parsable_certificates<'a>(&mut self, mut der_certs: Vec<CertificateDer<'static>>) {
+    pub fn add_parsable_certificates(&mut self, mut der_certs: Vec<CertificateDer<'static>>) {
         self.store.append(&mut der_certs)
+    }
+
+    /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
+    ///
+    /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
+    pub fn with_parsable_certificates(mut self, der_certs: Vec<CertificateDer<'static>>) -> Self {
+        self.add_parsable_certificates(der_certs);
+        self
     }
 
     #[cfg(feature = "webpki-root-certs")]
