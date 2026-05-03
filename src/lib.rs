@@ -1,5 +1,4 @@
 #![deny(missing_docs)]
-#![allow(clippy::result_large_err, clippy::large_enum_variant)]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
@@ -257,6 +256,7 @@ impl RustlsConnector {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the hanshake
+    #[allow(clippy::result_large_err)]
     pub fn connect<S: Read + Write + Send + 'static>(
         &self,
         domain: &str,
@@ -322,6 +322,7 @@ impl<S: Read + Send + Write + 'static> MidHandshakeTlsStream<S> {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the hanshake
+    #[allow(clippy::result_large_err)]
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         if let Err(e) = self.session.complete_io(&mut self.stream) {
             if e.kind() == io::ErrorKind::WouldBlock {
@@ -343,6 +344,7 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 }
 
 /// An error returned while performing the handshake
+#[allow(clippy::large_enum_variant)]
 pub enum HandshakeError<S: Read + Write + Send + 'static> {
     /// We hit WouldBlock during handshake.
     /// Note that this is not a critical failure, you should be able to call handshake again once the stream is ready to perform I/O.
