@@ -195,7 +195,6 @@ impl RustlsConnectorConfig {
     }
 }
 
-
 /// The connector
 #[derive(Clone)]
 pub struct RustlsConnector(Arc<ClientConfig>);
@@ -387,9 +386,11 @@ mod tests {
 
     #[test]
     fn empty_config_fails() {
-        assert!(RustlsConnectorConfig::default()
-            .connector_with_no_client_auth()
-            .is_err());
+        assert!(
+            RustlsConnectorConfig::default()
+                .connector_with_no_client_auth()
+                .is_err()
+        );
     }
 
     #[test]
