@@ -192,14 +192,6 @@ impl RustlsConnectorConfig {
 #[derive(Clone)]
 pub struct RustlsConnector(Arc<ClientConfig>);
 
-impl Default for RustlsConnector {
-    fn default() -> Self {
-        RustlsConnectorConfig::default()
-            .connector_with_no_client_auth()
-            .expect("no error codepath for default RustlsConnectorConfig")
-    }
-}
-
 impl From<ClientConfig> for RustlsConnector {
     fn from(config: ClientConfig) -> Self {
         Arc::new(config).into()
