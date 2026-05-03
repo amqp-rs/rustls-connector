@@ -380,3 +380,36 @@ impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
         HandshakeError::Failure(err)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_config_fails() {
+        assert!(RustlsConnectorConfig::default()
+            .connector_with_no_client_auth()
+            .is_err());
+    }
+
+    #[test]
+    #[cfg(feature = "webpki-root-certs")]
+    fn webpki_root_certs_connector_builds() {
+        RustlsConnector::new_with_webpki_root_certs().unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "platform-verifier")]
+    fn platform_verifier_connector_builds() {
+        RustlsConnector::new_with_platform_verifier().unwrap();
+    }
+
+    #[test]
+    fn handshake_error_failure_display() {
+        let err: HandshakeError<std::net::TcpStream> =
+            HandshakeError::Failure(io::Error::other("test error"));
+        assert!(err.to_string().contains("test error"));
+        assert!(format!("{err:?}").contains("test error"));
+        assert!(err.source().is_some());
+    }
+}
