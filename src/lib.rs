@@ -60,9 +60,10 @@ pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct RustlsConnectorConfig {
     store: Vec<CertificateDer<'static>>,
+    #[cfg(feature = "platform-verifier")]
     platform_verifier: bool,
 }
 
@@ -186,14 +187,6 @@ impl RustlsConnectorConfig {
     }
 }
 
-impl Default for RustlsConnectorConfig {
-    fn default() -> Self {
-        Self {
-            store: Vec::new(),
-            platform_verifier: false,
-        }
-    }
-}
 
 /// The connector
 #[derive(Clone)]
