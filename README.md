@@ -1,15 +1,26 @@
-# rustls-connector
+<div align="center">
 
 [![API Docs](https://docs.rs/rustls-connector/badge.svg)](https://docs.rs/rustls-connector)
 [![Build status](https://github.com/amqp-rs/rustls-connector/workflows/Build%20and%20test/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions)
 [![Downloads](https://img.shields.io/crates/d/rustls-connector.svg)](https://crates.io/crates/rustls-connector)
+[![Dependency Status](https://deps.rs/repo/github/amqp-rs/rustls-connector/status.svg)](https://deps.rs/repo/github/amqp-rs/rustls-connector)
+[![LICENSE](https://img.shields.io/crates/l/rustls-connector)](LICENSE)
 
-## Connector similar to openssl or native-tls for rustls
+ <strong>
+   A connector similar to openssl or native-tls for rustls.
+ </strong>
 
-rustls-connector is a library aiming at simplifying using rustls as
-an alternative to openssl and native-tls
+</div>
 
-## Warning about crypto backends
+<br />
+
+## Rustls certificates store
+
+- platform-verifier (default)
+- native-certs
+- webpki-root-certs
+
+## Warning about crypto backends for rustls
 
 A crypto implementation must be enabled in rustls using feature flags.
 We mimic what rustls does, providing one feature flag per implementation and enabling the same as rustls by default.
@@ -17,7 +28,7 @@ Available options are:
 - `rustls--aws_lc_rs` (default)
 - `rustls--ring`
 
-## Examples
+## Example
 
 To connect to a remote server:
 

@@ -1,4 +1,10 @@
-#![deny(missing_docs)]
+#![deny(missing_docs, missing_debug_implementations, unsafe_code)]
+#![warn(unreachable_pub, unused_qualifications, unused_lifetimes)]
+#![warn(
+    clippy::must_use_candidate,
+    clippy::unwrap_in_result,
+    clippy::panic_in_result_fn
+)]
 
 //! # Connector similar to openssl or native-tls for rustls
 //!
@@ -60,7 +66,7 @@ pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub struct RustlsConnectorConfig {
     store: Vec<CertificateDer<'static>>,
     #[cfg(feature = "platform-verifier")]
@@ -196,7 +202,7 @@ impl RustlsConnectorConfig {
 }
 
 /// The connector
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct RustlsConnector(Arc<ClientConfig>);
 
 impl From<ClientConfig> for RustlsConnector {

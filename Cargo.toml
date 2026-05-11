@@ -1,15 +1,16 @@
 [package]
-name          = "rustls-connector"
-version       = "0.23.1"
-authors       = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
-edition       = "2024"
-description   = "Connector similar to openssl or native-tls for rustls"
-repository    = "https://github.com/amqp-rs/rustls-connector"
+name = "rustls-connector"
+version = "0.23.2"
+edition = "2024"
+authors = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
+description = "Connector similar to openssl or native-tls for rustls"
+repository = "https://github.com/amqp-rs/rustls-connector"
+readme = "README.md"
 documentation = "https://docs.rs/rustls-connector"
-keywords      = ["tls", "rustls"]
-categories    = ["network-programming"]
-license       = "BSD-2-Clause"
-rust-version  = "1.87.0"
+keywords = ["tls", "rustls", "ssl", "connector", "crypto"]
+categories = ["asynchronous", "cryptography", "network-programming"]
+license = "BSD-2-Clause"
+rust-version = "1.87.0"
 
 [lib]
 name = "rustls_connector"
@@ -70,6 +71,3 @@ optional = true
 
 [package.metadata.docs.rs]
 all-features = true
-
-[badges]
-maintenance = { status = "actively-developed" }
