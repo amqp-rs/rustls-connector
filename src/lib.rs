@@ -155,6 +155,8 @@ impl RustlsConnectorConfig {
                     builder.crypto_provider().clone(),
                 )
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+                // `.dangerous()` is the rustls API for supplying a custom verifier;
+                // it does not bypass verification — `Verifier` delegates to the OS store.
                 return Ok(builder
                     .dangerous()
                     .with_custom_certificate_verifier(Arc::new(verifier)));
@@ -253,7 +255,7 @@ impl RustlsConnector {
     /// # Errors
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
-    /// failure when we couldn't complete the hanshake
+    /// failure when we couldn't complete the handshake
     #[allow(clippy::result_large_err)]
     pub fn connect<S: Read + Write + Send + 'static>(
         &self,
@@ -264,7 +266,7 @@ impl RustlsConnector {
             self.0.clone(),
             server_name(domain).map_err(HandshakeError::Failure)?,
         )
-        .map_err(|err| io::Error::new(io::ErrorKind::ConnectionAborted, err))?;
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         MidHandshakeTlsStream { session, stream }.handshake()
     }
 
@@ -273,7 +275,7 @@ impl RustlsConnector {
     ///
     /// # Errors
     ///
-    /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS hanshake
+    /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS handshake
     pub async fn connect_async<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
         &self,
         domain: &str,
@@ -290,7 +292,7 @@ fn server_name(domain: &str) -> io::Result<ServerName<'static>> {
         .map_err(|err| {
             io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("Invalid domain name ({err:?}): {domain}"),
+                format!("Invalid domain name: {err:?}"),
             )
         })?
         .to_owned())
@@ -303,7 +305,7 @@ pub struct MidHandshakeTlsStream<S: Read + Write> {
     stream: S,
 }
 
-impl<S: Read + Send + Write + 'static> MidHandshakeTlsStream<S> {
+impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
     /// Get a reference to the inner stream
     pub fn get_ref(&self) -> &S {
         &self.stream
@@ -319,7 +321,7 @@ impl<S: Read + Send + Write + 'static> MidHandshakeTlsStream<S> {
     /// # Errors
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
-    /// failure when we couldn't complete the hanshake
+    /// failure when we couldn't complete the handshake
     #[allow(clippy::result_large_err)]
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         if let Err(e) = self.session.complete_io(&mut self.stream) {
