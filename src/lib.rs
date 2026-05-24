@@ -6,14 +6,37 @@
     clippy::panic_in_result_fn
 )]
 
-//! # Connector similar to openssl or native-tls for rustls
+//! A TLS connector for rustls modelled after the `openssl` and `native-tls` APIs.
 //!
-//! rustls-connector is a library aiming at simplifying using rustls as
-//! an alternative to openssl and native-tls
+//! Wraps [`rustls`] with a high-level [`RustlsConnector`] type that mirrors the
+//! ergonomics of `native_tls::TlsConnector`, making it straightforward to swap
+//! TLS backends in existing code.
 //!
-//! # Examples
+//! # Feature flags
 //!
-//! To connect to a remote server:
+//! ## Certificate store (pick at least one)
+//!
+//! | Flag | Notes |
+//! |------|-------|
+//! | `platform-verifier` *(default)* | Platform trust store via rustls-platform-verifier |
+//! | `native-certs` | Native root certificates via rustls-native-certs |
+//! | `webpki-root-certs` | Bundled Mozilla root certificate set |
+//!
+//! ## Rustls crypto provider (at least one must be enabled)
+//!
+//! | Flag | Notes |
+//! |------|-------|
+//! | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
+//! | `rustls--ring` | Uses ring (more portable) |
+//!
+//! ## Miscellaneous
+//!
+//! | Flag | Notes |
+//! |------|-------|
+//! | `futures` | Async connect via `futures-rustls` |
+//! | `logging` | Enable rustls TLS logging |
+//!
+//! # Example
 //!
 //! ```rust, no_run
 //! use rustls_connector::RustlsConnector;

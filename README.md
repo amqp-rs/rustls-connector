@@ -6,27 +6,38 @@
 [![Dependency Status](https://deps.rs/repo/github/amqp-rs/rustls-connector/status.svg)](https://deps.rs/repo/github/amqp-rs/rustls-connector)
 [![LICENSE](https://img.shields.io/crates/l/rustls-connector)](LICENSE)
 
- <strong>
-   A connector similar to openssl or native-tls for rustls.
- </strong>
+**A TLS connector for rustls modelled after the `openssl` and `native-tls` APIs.**
 
 </div>
 
-<br />
+Wraps `rustls` with a high-level `RustlsConnector` type that mirrors the
+ergonomics of `native_tls::TlsConnector`, making it straightforward to swap
+TLS backends in existing code. An async variant is available via the `futures`
+feature.
 
-## Rustls certificates store
+## Feature flags
 
-- platform-verifier (default)
-- native-certs
-- webpki-root-certs
+### Certificate store (pick at least one)
 
-## Warning about crypto backends for rustls
+| Flag | Notes |
+|------|-------|
+| `platform-verifier` *(default)* | Platform trust store via rustls-platform-verifier |
+| `native-certs` | Native root certificates via rustls-native-certs |
+| `webpki-root-certs` | Bundled Mozilla root certificate set |
 
-A crypto implementation must be enabled in rustls using feature flags.
-We mimic what rustls does, providing one feature flag per implementation and enabling the same as rustls by default.
-Available options are:
-- `rustls--aws_lc_rs` (default)
-- `rustls--ring`
+### Rustls crypto provider (at least one required)
+
+| Flag | Notes |
+|------|-------|
+| `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
+| `rustls--ring` | Uses ring (more portable, e.g. builds on Windows) |
+
+### Miscellaneous
+
+| Flag | Notes |
+|------|-------|
+| `futures` | Async connect via `futures-rustls` |
+| `logging` | Enable rustls TLS logging |
 
 ## Example
 
