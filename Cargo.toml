@@ -1,6 +1,6 @@
 [package]
 name = "rustls-connector"
-version = "0.23.5"
+version = "0.23.6"
 edition = "2024"
 authors = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 description = "Connector similar to openssl or native-tls for rustls"
@@ -61,7 +61,7 @@ version  = "^0.7"
 optional = true
 
 [dependencies.rustls-webpki]
-version          = "^0.103"
+version          = "^0.103.13"
 default-features = false
 features         = ["std"]
 
