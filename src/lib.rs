@@ -56,14 +56,20 @@
 //! println!("{}", String::from_utf8_lossy(&res));
 //! ```
 
+/// Reexport of the [`rustls`](https://docs.rs/rustls) crate.
 pub use rustls;
 #[cfg(feature = "native-certs")]
+/// Reexport of the [`rustls_native_certs`](https://docs.rs/rustls-native-certs) crate.
 pub use rustls_native_certs;
+/// Reexport of the [`rustls_pki_types`](https://docs.rs/rustls-pki-types) crate.
 pub use rustls_pki_types;
 #[cfg(feature = "platform-verifier")]
+/// Reexport of the [`rustls_platform_verifier`](https://docs.rs/rustls-platform-verifier) crate.
 pub use rustls_platform_verifier;
+/// Reexport of the [`webpki`](https://docs.rs/webpki) crate.
 pub use webpki;
 #[cfg(feature = "webpki-root-certs")]
+/// Reexport of the [`webpki_root_certs`](https://docs.rs/webpki-root-certs) crate.
 pub use webpki_root_certs;
 
 #[cfg(feature = "futures")]
@@ -81,11 +87,11 @@ use std::{
     sync::Arc,
 };
 
-/// A TLS stream
+/// A rustls client TLS stream wrapping an underlying synchronous I/O stream `S`.
 pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 
 #[cfg(feature = "futures")]
-/// An async TLS stream
+/// A rustls client TLS stream wrapping an underlying async I/O stream `S`.
 pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
@@ -226,7 +232,12 @@ impl RustlsConnectorConfig {
     }
 }
 
-/// The connector
+/// A rustls TLS connector ready to perform TLS handshakes.
+///
+/// Wraps an [`Arc<ClientConfig>`] and can be built from a [`RustlsConnectorConfig`] via
+/// [`connector_with_no_client_auth`](RustlsConnectorConfig::connector_with_no_client_auth) or
+/// [`connector_with_single_cert`](RustlsConnectorConfig::connector_with_single_cert), or
+/// directly from a `ClientConfig` via the [`From`] impl.
 #[derive(Clone, Debug)]
 pub struct RustlsConnector(Arc<ClientConfig>);
 
