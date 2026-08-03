@@ -1,6 +1,6 @@
 [package]
 name = "rustls-connector"
-version = "0.23.6"
+version = "0.23.7"
 edition = "2024"
 authors = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 description = "Connector similar to openssl or native-tls for rustls"
