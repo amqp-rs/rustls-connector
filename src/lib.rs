@@ -111,6 +111,7 @@ impl RustlsConnectorConfig {
 
     #[cfg(feature = "platform-verifier")]
     /// Create a new [`RustlsConnectorConfig`] using the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    #[must_use]
     pub fn new_with_platform_verifier() -> Self {
         Self::default().with_platform_verifier()
     }
@@ -135,6 +136,7 @@ impl RustlsConnectorConfig {
     /// Parse the given DER-encoded certificates and add all that can be parsed in a best-effort fashion.
     ///
     /// This is because large collections of root certificates often include ancient or syntactically invalid certificates.
+    #[must_use]
     pub fn with_parsable_certificates(mut self, der_certs: Vec<CertificateDer<'static>>) -> Self {
         self.add_parsable_certificates(der_certs);
         self
@@ -149,6 +151,7 @@ impl RustlsConnectorConfig {
 
     #[cfg(feature = "platform-verifier")]
     /// Use the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    #[must_use]
     pub fn with_platform_verifier(mut self) -> Self {
         self.platform_verifier = true;
         self
