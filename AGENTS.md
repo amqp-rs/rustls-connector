@@ -29,7 +29,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 - `native-certs` — loads system certificates via `rustls-native-certs`
 - `webpki-root-certs` — bundles Mozilla root certificates via `webpki-root-certs`
 - `futures` — enables async support via `futures-rustls` and `futures-io`
-- `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection; at least one must be enabled
+- `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection; an installed process default takes precedence, otherwise aws-lc-rs wins if both are enabled, and construction returns an error if neither is enabled
 
 `platform-verifier` and `webpki-root-certs`/`native-certs` can be combined: extra roots from the latter are passed to the platform verifier via `new_with_extra_roots`.
 

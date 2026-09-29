@@ -32,6 +32,18 @@ feature.
 | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
 | `rustls--ring` | Uses ring (more portable, e.g. builds on Windows) |
 
+An installed process-level rustls crypto provider takes precedence. If both
+provider features are enabled, the connector uses aws-lc-rs unless a
+process-level default has been installed. If neither is enabled, connector
+construction returns an error.
+
+To use ring without compiling aws-lc-rs, disable default features and select
+a certificate store explicitly:
+
+```toml
+rustls-connector = { version = "0.23", default-features = false, features = ["platform-verifier", "rustls--ring"] }
+```
+
 ### Miscellaneous
 
 | Flag | Notes |
