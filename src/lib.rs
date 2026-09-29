@@ -348,6 +348,10 @@ impl RustlsConnector {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the handshake
+    // FIXME: The `Send + 'static` bounds here, in `connect_async`, and on
+    // `HandshakeError<S>` exclude borrowed and non-`Send` streams. Removing the
+    // public `'static` bound can break downstream code that relies on its implied
+    // lifetime constraint, so supporting those streams needs a compatible API.
     #[allow(clippy::result_large_err)]
     pub fn connect<S: Read + Write + Send + 'static>(
         &self,
@@ -398,6 +402,10 @@ pub struct MidHandshakeTlsStream<S: Read + Write> {
 }
 
 impl<S: Read + Write> MidHandshakeTlsStream<S> {
+    fn needs_handshake_io(&self) -> bool {
+        self.session.is_handshaking() || self.session.wants_write()
+    }
+
     /// Get a reference to the inner stream
     pub fn get_ref(&self) -> &S {
         &self.stream
@@ -409,6 +417,13 @@ impl<S: Read + Write> MidHandshakeTlsStream<S> {
     }
 }
 
+fn is_retryable_handshake_io(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+    )
+}
+
 impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
     /// Retry the handshake
     ///
@@ -418,16 +433,34 @@ impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
     /// failure when we couldn't complete the handshake
     #[allow(clippy::result_large_err)]
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
-        if let Err(e) = self.session.complete_io(&mut self.stream) {
-            if e.kind() == io::ErrorKind::WouldBlock {
-                if self.session.is_handshaking() {
-                    return Err(HandshakeError::WouldBlock(self));
-                }
-            } else {
-                return Err(e.into());
+        match self.stream.flush() {
+            Ok(()) => {}
+            Err(e) if is_retryable_handshake_io(&e) => {
+                return Err(HandshakeError::WouldBlock(self));
             }
+            Err(e) => return Err(e.into()),
         }
-        Ok(TlsStream::new(self.session, self.stream))
+
+        if !self.needs_handshake_io() {
+            return Ok(TlsStream::new(self.session, self.stream));
+        }
+
+        match self.session.complete_io(&mut self.stream) {
+            Err(e) if is_retryable_handshake_io(&e) => {
+                return Err(HandshakeError::WouldBlock(self));
+            }
+            Err(e) => return Err(e.into()),
+            Ok((0, 0)) if self.needs_handshake_io() => {
+                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
+            }
+            _ => {}
+        }
+
+        if self.needs_handshake_io() {
+            Err(HandshakeError::WouldBlock(self))
+        } else {
+            Ok(TlsStream::new(self.session, self.stream))
+        }
     }
 }
 
@@ -440,8 +473,8 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 /// An error returned while performing the handshake
 #[allow(clippy::large_enum_variant)]
 pub enum HandshakeError<S: Read + Write + Send + 'static> {
-    /// We hit WouldBlock during handshake.
-    /// Note that this is not a critical failure, you should be able to call handshake again once the stream is ready to perform I/O.
+    /// I/O returned `WouldBlock` or `Interrupted` during the handshake.
+    /// The handshake state is preserved so it can be retried.
     WouldBlock(MidHandshakeTlsStream<S>),
     /// We hit a critical failure.
     Failure(io::Error),
@@ -450,7 +483,7 @@ pub enum HandshakeError<S: Read + Write + Send + 'static> {
 impl<S: Read + Write + Send + 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            HandshakeError::WouldBlock(_) => f.write_str("WouldBlock hit during handshake"),
+            HandshakeError::WouldBlock(_) => f.write_str("Handshake needs another I/O attempt"),
             HandshakeError::Failure(err) => f.write_fmt(format_args!("IO error: {err}")),
         }
     }
@@ -486,6 +519,97 @@ impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    #[derive(Debug)]
+    struct PartialTlsRead(usize);
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    impl Read for PartialTlsRead {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let reads = self.0;
+            self.0 += 1;
+            if reads > 0 {
+                Err(io::ErrorKind::WouldBlock.into())
+            } else {
+                buf[0] = 0x16;
+                Ok(1)
+            }
+        }
+    }
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    impl Write for PartialTlsRead {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    #[derive(Debug, Default)]
+    struct InterruptedIo {
+        flushes: usize,
+        writes: usize,
+    }
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    impl Read for InterruptedIo {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::WouldBlock.into())
+        }
+    }
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    impl Write for InterruptedIo {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
+            if self.writes == 1 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.flushes += 1;
+            if self.flushes == 1 {
+                Err(io::ErrorKind::Interrupted.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    #[cfg(feature = "webpki-root-certs")]
+    #[derive(Debug)]
+    struct BlockingFlush(usize);
+
+    #[cfg(feature = "webpki-root-certs")]
+    impl Read for BlockingFlush {
+        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::WouldBlock.into())
+        }
+    }
+
+    #[cfg(feature = "webpki-root-certs")]
+    impl Write for BlockingFlush {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.0 += 1;
+            if self.0 == 2 {
+                Err(io::ErrorKind::WouldBlock.into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
     #[test]
     fn empty_config_fails() {
         assert!(
@@ -493,6 +617,73 @@ mod tests {
                 .connector_with_no_client_auth()
                 .is_err()
         );
+    }
+
+    #[test]
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    fn partial_read_remains_mid_handshake() {
+        #[cfg(feature = "webpki-root-certs")]
+        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
+        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
+        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
+
+        let mid = match connector.connect("example.com", PartialTlsRead(0)) {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert!(mid.session.is_handshaking());
+        assert_eq!(mid.stream.0, 2);
+        assert!(matches!(
+            mid.handshake(),
+            Err(HandshakeError::WouldBlock(_))
+        ));
+    }
+
+    #[test]
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    fn interrupted_io_preserves_mid_handshake() {
+        #[cfg(feature = "webpki-root-certs")]
+        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
+        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
+        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
+
+        let mid = match connector.connect("example.com", InterruptedIo::default()) {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert_eq!((mid.stream.flushes, mid.stream.writes), (1, 0));
+
+        let mid = match mid.handshake() {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert_eq!((mid.stream.flushes, mid.stream.writes), (2, 1));
+
+        let mid = match mid.handshake() {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert!(mid.session.is_handshaking());
+        assert!(mid.stream.flushes >= 3);
+        assert!(mid.stream.writes >= 2);
+    }
+
+    #[test]
+    #[cfg(feature = "webpki-root-certs")]
+    fn blocked_flush_is_retried() {
+        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
+        let mid = match connector.connect("example.com", BlockingFlush(0)) {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert_eq!(mid.stream.0, 2);
+        assert!(!mid.session.wants_write());
+
+        let mid = match mid.handshake() {
+            Err(HandshakeError::WouldBlock(mid)) => mid,
+            other => panic!("expected WouldBlock, got {other:?}"),
+        };
+        assert_eq!(mid.stream.0, 3);
     }
 
     #[test]

@@ -33,4 +33,6 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 
 `platform-verifier` and `webpki-root-certs`/`native-certs` can be combined: extra roots from the latter are passed to the platform verifier via `new_with_extra_roots`.
 
+Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt, and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending or I/O is interrupted.
+
 **MSRV:** 1.87.0
