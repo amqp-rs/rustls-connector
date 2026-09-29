@@ -43,7 +43,7 @@ default-features = false
 features         = ["tls12"]
 
 [dependencies.rustls]
-version          = "^0.23.25"
+version          = "^0.23.45"
 default-features = false
 features         = ["std", "tls12"]
 
