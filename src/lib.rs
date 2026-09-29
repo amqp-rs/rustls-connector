@@ -11,6 +11,8 @@
 //! Wraps [`rustls`] with a high-level [`RustlsConnector`] type that mirrors the
 //! ergonomics of `native_tls::TlsConnector`, making it straightforward to swap
 //! TLS backends in existing code.
+//! Connections can use borrowed or non-`Send` I/O streams; async connections
+//! additionally require `Unpin`.
 //!
 //! # Feature flags
 //!
@@ -347,18 +349,14 @@ impl RustlsConnector {
         RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth()
     }
 
-    /// Connect to the given host
+    /// Connect to the given host using an owned or borrowed stream, including non-`Send` streams.
     ///
     /// # Errors
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the handshake
-    // FIXME: The `Send + 'static` bounds here, in `connect_async`, and on
-    // `HandshakeError<S>` exclude borrowed and non-`Send` streams. Removing the
-    // public `'static` bound can break downstream code that relies on its implied
-    // lifetime constraint, so supporting those streams needs a compatible API.
     #[allow(clippy::result_large_err)]
-    pub fn connect<S: Read + Write + Send + 'static>(
+    pub fn connect<S: Read + Write>(
         &self,
         domain: &str,
         stream: S,
@@ -372,12 +370,12 @@ impl RustlsConnector {
     }
 
     #[cfg(feature = "futures")]
-    /// Connect to the given host asynchronously
+    /// Connect to the given host asynchronously using an owned or borrowed stream, including non-`Send` streams.
     ///
     /// # Errors
     ///
     /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS handshake
-    pub async fn connect_async<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
+    pub async fn connect_async<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         domain: &str,
         stream: S,
@@ -429,7 +427,7 @@ fn is_retryable_handshake_io(error: &io::Error) -> bool {
     )
 }
 
-impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
+impl<S: Read + Write> MidHandshakeTlsStream<S> {
     /// Retry the handshake
     ///
     /// # Errors
@@ -477,7 +475,7 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 
 /// An error returned while performing the handshake
 #[allow(clippy::large_enum_variant)]
-pub enum HandshakeError<S: Read + Write + Send + 'static> {
+pub enum HandshakeError<S: Read + Write> {
     /// I/O returned `WouldBlock` or `Interrupted` during the handshake.
     /// The handshake state is preserved so it can be retried.
     WouldBlock(MidHandshakeTlsStream<S>),
@@ -485,7 +483,7 @@ pub enum HandshakeError<S: Read + Write + Send + 'static> {
     Failure(io::Error),
 }
 
-impl<S: Read + Write + Send + 'static> fmt::Display for HandshakeError<S> {
+impl<S: Read + Write> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => f.write_str("Handshake needs another I/O attempt"),
@@ -494,7 +492,7 @@ impl<S: Read + Write + Send + 'static> fmt::Display for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Write + Send + 'static> fmt::Debug for HandshakeError<S> {
+impl<S: Read + Write> fmt::Debug for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut d = f.debug_tuple("HandshakeError");
         match self {
@@ -505,7 +503,7 @@ impl<S: Read + Write + Send + 'static> fmt::Debug for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Write + Send + 'static> Error for HandshakeError<S> {
+impl<S: Read + Write> Error for HandshakeError<S> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             HandshakeError::Failure(err) => Some(err),
@@ -514,7 +512,7 @@ impl<S: Read + Write + Send + 'static> Error for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
+impl<S: Read + Write> From<io::Error> for HandshakeError<S> {
     fn from(err: io::Error) -> Self {
         HandshakeError::Failure(err)
     }
@@ -552,6 +550,12 @@ mod tests {
             Ok(())
         }
     }
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    trait BorrowedIo: Read + Write {}
+
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    impl<T: Read + Write> BorrowedIo for T {}
 
     #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
     #[derive(Debug, Default)]
@@ -642,6 +646,86 @@ mod tests {
             mid.handshake(),
             Err(HandshakeError::WouldBlock(_))
         ));
+    }
+
+    #[test]
+    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    fn sync_connect_accepts_borrowed_non_send_stream() {
+        #[cfg(feature = "webpki-root-certs")]
+        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
+        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
+        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
+
+        let mut transport = PartialTlsRead(0);
+        let io: &mut dyn BorrowedIo = &mut transport;
+        let err = connector
+            .connect("example.com", io)
+            .err()
+            .expect("handshake pending");
+        assert!(err.source().is_none());
+        let mid = match err {
+            HandshakeError::WouldBlock(mid) => mid,
+            HandshakeError::Failure(err) => panic!("unexpected failure: {err}"),
+        };
+        assert!(matches!(
+            mid.handshake(),
+            Err(HandshakeError::WouldBlock(_))
+        ));
+    }
+
+    #[test]
+    #[cfg(all(
+        feature = "futures",
+        any(feature = "platform-verifier", feature = "webpki-root-certs")
+    ))]
+    fn async_connect_accepts_borrowed_non_send_stream() {
+        use std::{
+            pin::Pin,
+            rc::Rc,
+            task::{Context, Poll},
+        };
+
+        #[derive(Default)]
+        struct LocalAsyncIo {
+            _not_send: Rc<()>,
+        }
+
+        impl AsyncRead for LocalAsyncIo {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+                _: &mut [u8],
+            ) -> Poll<io::Result<usize>> {
+                Poll::Pending
+            }
+        }
+
+        impl AsyncWrite for LocalAsyncIo {
+            fn poll_write(
+                self: Pin<&mut Self>,
+                _: &mut Context<'_>,
+                _: &[u8],
+            ) -> Poll<io::Result<usize>> {
+                Poll::Pending
+            }
+
+            fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                Poll::Pending
+            }
+
+            fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                Poll::Pending
+            }
+        }
+
+        #[cfg(feature = "webpki-root-certs")]
+        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
+        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
+        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
+
+        let mut transport = LocalAsyncIo::default();
+        let future = connector.connect_async("example.com", &mut transport);
+        drop(future);
     }
 
     #[test]

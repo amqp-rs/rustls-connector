@@ -20,7 +20,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 
 **Core types:**
 - `RustlsConnectorConfig` — builder for certificate roots and verification strategy; converts to a `RustlsConnector` via `connector_with_no_client_auth()` or `connector_with_single_cert()`
-- `RustlsConnector` — thin `Arc<ClientConfig>` newtype; exposes `connect()` (sync) and `connect_async()` (async, behind `futures` feature)
+- `RustlsConnector` — thin `Arc<ClientConfig>` newtype; exposes `connect()` (sync) and `connect_async()` (async, behind `futures` feature), both accepting borrowed and non-`Send` streams
 - `TlsStream<S>` / `AsyncTlsStream<S>` — type aliases for the underlying rustls stream types
 - `HandshakeError<S>` — distinguishes `WouldBlock` (retryable) from `Failure` (fatal), mirroring the `native-tls` API
 

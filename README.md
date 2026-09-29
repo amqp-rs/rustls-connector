@@ -15,6 +15,9 @@ ergonomics of `native_tls::TlsConnector`, making it straightforward to swap
 TLS backends in existing code. An async variant is available via the `futures`
 feature.
 
+Both connection methods accept borrowed I/O streams and streams that do not
+implement `Send`; async streams must also implement `Unpin`.
+
 ## Feature flags
 
 ### Certificate store (pick at least one)
