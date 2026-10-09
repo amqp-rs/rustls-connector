@@ -35,7 +35,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 
 Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt, and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending or I/O is interrupted.
 
-**MSRV:** 1.87.0
+**MSRV:** 1.85.0
 
 ## CI
 
