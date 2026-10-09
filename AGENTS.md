@@ -36,3 +36,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt, and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending or I/O is interrupted.
 
 **MSRV:** 1.87.0
+
+## CI
+
+The workflows in `.github/workflows/` delegate to shared composite actions in [`amqp-rs/actions`](https://github.com/amqp-rs/actions). They reference those actions as `@main` on purpose: that repository is ours, and it keeps action bumps in sync across all amqp-rs repositories. Do not pin them to a SHA or tag. For the same reason, `.github/dependabot.yml` only tracks `cargo`, and `amqp-rs/actions` bumps the third-party actions itself.
