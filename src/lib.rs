@@ -22,7 +22,7 @@
 //! | `native-certs` | Native root certificates via rustls-native-certs |
 //! | `webpki-root-certs` | Bundled Mozilla root certificate set |
 //!
-//! ## Rustls crypto provider (at least one must be enabled)
+//! ## Rustls crypto provider (one is used, see below)
 //!
 //! | Flag | Notes |
 //! |------|-------|
@@ -31,9 +31,20 @@
 //!
 //! A process-level default installed with
 //! [`CryptoProvider::install_default`](rustls::crypto::CryptoProvider::install_default)
-//! takes precedence. Otherwise, this crate uses aws-lc-rs when both provider features
-//! are enabled, and ring when only `rustls--ring` is enabled. If neither feature is
-//! enabled, building a connector returns an error.
+//! takes precedence. Otherwise, the first connector build selects aws-lc-rs when both
+//! provider features are enabled, and ring when only `rustls--ring` is enabled, and
+//! installs it as the process-level default, like rustls's own `ClientConfig::builder()`
+//! does. From then on, other rustls users in the process work even when cargo feature
+//! unification enables both of rustls's providers, and `install_default` returns an
+//! error. If they may run before the first connector build, or your application installs
+//! its own provider, install one early in `main` instead.
+//!
+//! If neither feature is enabled, rustls selects the provider from its own crate
+//! features, which other crates in the dependency graph may enable, and installs it as
+//! the process-level default too; building a connector panics if rustls cannot select
+//! exactly one. If your application relies on rustls's `custom-provider` feature, or
+//! must otherwise never fall back to a built-in provider, disable this crate's provider
+//! features and install your provider before building any connector.
 //!
 //! ## Miscellaneous
 //!
@@ -97,23 +108,39 @@ use std::{
     sync::Arc,
 };
 
+/// The crypto provider for new connectors: the process-level default, installing the one
+/// selected by this crate's features if there is none yet.
+#[cfg(any(feature = "rustls--aws_lc_rs", feature = "rustls--ring"))]
 fn crypto_provider() -> io::Result<Arc<CryptoProvider>> {
     if let Some(provider) = CryptoProvider::get_default() {
         return Ok(provider.clone());
     }
 
     #[cfg(feature = "rustls--aws_lc_rs")]
-    let provider = Some(rustls::crypto::aws_lc_rs::default_provider());
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
 
-    #[cfg(all(not(feature = "rustls--aws_lc_rs"), feature = "rustls--ring"))]
-    let provider = Some(rustls::crypto::ring::default_provider());
+    #[cfg(not(feature = "rustls--aws_lc_rs"))]
+    let provider = rustls::crypto::ring::default_provider();
 
-    #[cfg(not(any(feature = "rustls--aws_lc_rs", feature = "rustls--ring")))]
-    let provider: Option<CryptoProvider> = None;
+    // If another thread installed a default in the meantime, use that one.
+    let _ = provider.install_default();
+    CryptoProvider::get_default()
+        .cloned()
+        .ok_or_else(|| io::Error::other("Failed to install a rustls crypto provider"))
+}
 
-    provider
-        .map(Arc::new)
-        .ok_or_else(|| io::Error::other("No rustls crypto provider is enabled"))
+/// The crypto provider for new connectors, as selected by rustls itself.
+///
+/// Panics if no process-level default is installed and rustls cannot select a provider from its
+/// own crate features.
+#[cfg(not(any(feature = "rustls--aws_lc_rs", feature = "rustls--ring")))]
+fn crypto_provider() -> io::Result<Arc<CryptoProvider>> {
+    // `ClientConfig::builder()` panics if the installed provider lacks the default protocol
+    // versions; `builder()` reports that as an error instead.
+    if let Some(provider) = CryptoProvider::get_default() {
+        return Ok(provider.clone());
+    }
+    Ok(ClientConfig::builder().crypto_provider().clone())
 }
 
 /// A rustls client TLS stream wrapping an underlying synchronous I/O stream `S`.
@@ -262,9 +289,13 @@ impl RustlsConnectorConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if no crypto provider is available, the provider does not support the
-    /// default protocol versions, the verifier cannot be initialized, or no valid root certificate
-    /// could be loaded.
+    /// Returns an error if the crypto provider does not support the default protocol versions, the
+    /// verifier cannot be initialized, or no valid root certificate could be loaded.
+    ///
+    /// # Panics
+    ///
+    /// Panics if neither `rustls--aws_lc_rs` nor `rustls--ring` is enabled, no process-level
+    /// crypto provider is installed, and rustls cannot select one from its own crate features.
     pub fn connector_with_no_client_auth(self) -> io::Result<RustlsConnector> {
         Ok(self.builder()?.with_no_client_auth().into())
     }
@@ -276,9 +307,13 @@ impl RustlsConnectorConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if no crypto provider is available, the provider does not support the
-    /// default protocol versions, the verifier cannot be initialized, no valid root certificate
-    /// could be loaded, or key_der is invalid.
+    /// Returns an error if the crypto provider does not support the default protocol versions, the
+    /// verifier cannot be initialized, no valid root certificate could be loaded, or key_der is
+    /// invalid.
+    ///
+    /// # Panics
+    ///
+    /// See [`connector_with_no_client_auth`](Self::connector_with_no_client_auth).
     pub fn connector_with_single_cert(
         self,
         cert_chain: Vec<CertificateDer<'static>>,
@@ -321,6 +356,9 @@ impl RustlsConnector {
     ///
     /// Returns an error if the crypto provider or verifier cannot be initialized.
     ///
+    /// # Panics
+    ///
+    /// See [`RustlsConnectorConfig::connector_with_no_client_auth`].
     pub fn new_with_webpki_root_certs() -> io::Result<Self> {
         RustlsConnectorConfig::new_with_webpki_root_certs().connector_with_no_client_auth()
     }
@@ -332,6 +370,9 @@ impl RustlsConnector {
     ///
     /// Returns an error if the crypto provider or verifier cannot be initialized.
     ///
+    /// # Panics
+    ///
+    /// See [`RustlsConnectorConfig::connector_with_no_client_auth`].
     pub fn new_with_platform_verifier() -> io::Result<Self> {
         RustlsConnectorConfig::new_with_platform_verifier().connector_with_no_client_auth()
     }
@@ -344,6 +385,9 @@ impl RustlsConnector {
     /// Returns an error if native certificates cannot be loaded, or the crypto provider or
     /// verifier cannot be initialized.
     ///
+    /// # Panics
+    ///
+    /// See [`RustlsConnectorConfig::connector_with_no_client_auth`].
     pub fn new_with_native_certs() -> io::Result<Self> {
         RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth()
     }
@@ -560,6 +604,13 @@ mod tests {
                 .with_root_certificates(RootCertStore::empty())
                 .with_no_client_auth()
                 .into()
+        }
+
+        #[test]
+        fn selected_provider_becomes_process_default() {
+            let provider = crypto_provider().unwrap();
+            let default = CryptoProvider::get_default().unwrap();
+            assert!(Arc::ptr_eq(&provider, default));
         }
 
         /// The outcome of one call on a [`ScriptedIo`].

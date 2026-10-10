@@ -25,17 +25,22 @@ feature.
 | `native-certs` | Native root certificates via rustls-native-certs |
 | `webpki-root-certs` | Bundled Mozilla root certificate set |
 
-### Rustls crypto provider (at least one required)
+### Rustls crypto provider (one is used, see below)
 
 | Flag | Notes |
 |------|-------|
 | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
 | `rustls--ring` | Uses ring (more portable, e.g. builds on Windows) |
 
-An installed process-level rustls crypto provider takes precedence. If both
-provider features are enabled, the connector uses aws-lc-rs unless a
-process-level default has been installed. If neither is enabled, connector
-construction returns an error.
+Connectors use the process-level rustls crypto provider when one is installed.
+Otherwise they pick aws-lc-rs, or ring if only `rustls--ring` is enabled, and
+install it as the process-level default when the first connector is built, so
+install a provider early in `main` if other rustls users may start before
+that. With neither feature, the choice is left to rustls's own crate features:
+rustls installs the provider it picks as the default too, and building a
+connector panics if it cannot pick one. Applications using a custom rustls
+provider should disable this crate's provider features and install their
+provider before building any connector.
 
 To use ring without compiling aws-lc-rs, disable default features and select
 a certificate store explicitly:

@@ -21,7 +21,7 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 native-certs      = ["dep:rustls-native-certs"]
 webpki-root-certs = ["dep:webpki-root-certs"]
 
-# rustls crypto providers. Choose at least one. Otherwise, runtime errors.
+# rustls crypto providers. Without either, rustls picks one from its own features, if it can.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
 rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs", "rustls/prefer-post-quantum"] # default, but doesn't build everywhere
 rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)

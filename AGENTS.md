@@ -14,7 +14,7 @@ cargo semver-checks                                           # check semver com
 cargo audit                                                   # security audit
 ```
 
-Tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module.
+Unit tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module; `tests/installed_provider.rs`, which installs a process-level crypto provider, is a test binary of its own and runs with or without one.
 
 ## Architecture
 
@@ -31,7 +31,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 - `native-certs` — loads system certificates via `rustls-native-certs`
 - `webpki-root-certs` — bundles Mozilla root certificates via `webpki-root-certs`
 - `futures` — enables async support via `futures-rustls` and `futures-io`
-- `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection (`rustls--aws_lc_rs` also enables rustls's `prefer-post-quantum`: it is a rustls default, which this crate otherwise loses by disabling rustls's default features); an installed process default takes precedence, otherwise aws-lc-rs wins if both are enabled, and construction returns an error if neither is enabled
+- `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection, made by `crypto_provider()` and documented in the crate docs' feature flags section (`rustls--aws_lc_rs` also enables rustls's `prefer-post-quantum`, a rustls default that this crate otherwise loses by disabling rustls's default features)
 
 `platform-verifier` and `webpki-root-certs`/`native-certs` can be combined: extra roots from the latter are passed to the platform verifier via `new_with_extra_roots`.
 
