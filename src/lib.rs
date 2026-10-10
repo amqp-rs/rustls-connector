@@ -168,7 +168,7 @@ pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
-#[derive(Clone, Default, Debug)]
+#[derive(Clone, Default)]
 pub struct RustlsConnectorConfig {
     store: Vec<CertificateDer<'static>>,
     // Kept apart from `store`: the platform verifier only needs them in some cases.
@@ -178,8 +178,29 @@ pub struct RustlsConnectorConfig {
     // loaded with.
     #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
     native_certs_needed: bool,
+    // A flag rather than certificates in `store`, so that without the platform verifier, which
+    // gets their DER, they are only parsed once per process.
+    #[cfg(feature = "webpki-root-certs")]
+    webpki_root_certs: bool,
     #[cfg(feature = "platform-verifier")]
     platform_verifier: bool,
+}
+
+// Certificates would be dumped byte by byte; only count them.
+impl fmt::Debug for RustlsConnectorConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut d = f.debug_struct("RustlsConnectorConfig");
+        d.field("extra_roots", &self.store.len());
+        #[cfg(feature = "native-certs")]
+        d.field("native_certs", &self.native_certs.len());
+        #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+        d.field("native_certs_needed", &self.native_certs_needed);
+        #[cfg(feature = "webpki-root-certs")]
+        d.field("webpki_root_certs", &self.webpki_root_certs);
+        #[cfg(feature = "platform-verifier")]
+        d.field("platform_verifier", &self.platform_verifier);
+        d.finish()
+    }
 }
 
 /// The certificates rustls-native-certs loaded from the OS store, or an error if there are none:
@@ -271,6 +292,28 @@ fn warn_ignored_roots(ignored: usize, origin: &str) {
     }
 }
 
+/// The webpki-root-certs set as trust anchors, parsed on first use.
+///
+/// They borrow the static certificates, so adding them to a store copies no certificate data.
+#[cfg(feature = "webpki-root-certs")]
+fn webpki_trust_anchors() -> &'static [rustls::pki_types::TrustAnchor<'static>] {
+    static ANCHORS: std::sync::OnceLock<Vec<rustls::pki_types::TrustAnchor<'static>>> =
+        std::sync::OnceLock::new();
+    static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    let anchors = ANCHORS.get_or_init(|| {
+        webpki_root_certs::TLS_SERVER_ROOT_CERTS
+            .iter()
+            .filter_map(|cert| webpki::anchor_from_trusted_cert(cert).ok())
+            .collect()
+    });
+    // Outside `get_or_init`, which a logger that builds a connector would re-enter.
+    if !WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let ignored = webpki_root_certs::TLS_SERVER_ROOT_CERTS.len() - anchors.len();
+        warn_ignored_roots(ignored, "webpki");
+    }
+    anchors
+}
+
 impl RustlsConnectorConfig {
     #[cfg(feature = "webpki-root-certs")]
     /// Create a new [`RustlsConnectorConfig`] using the webpki-root-certs (requires webpki-root-certs feature enabled)
@@ -324,7 +367,7 @@ impl RustlsConnectorConfig {
     /// Add certs from webpki-root-certs (requires webpki-root-certs feature enabled)
     #[must_use]
     pub fn with_webpki_root_certs(mut self) -> Self {
-        self.add_parsable_certificates(webpki_root_certs::TLS_SERVER_ROOT_CERTS.to_vec());
+        self.webpki_root_certs = true;
         self
     }
 
@@ -375,48 +418,61 @@ impl RustlsConnectorConfig {
         Ok(self)
     }
 
+    /// The roots to pass to the platform verifier on top of those it trusts itself.
+    #[cfg(feature = "platform-verifier")]
+    fn platform_verifier_extra_roots(self) -> Vec<CertificateDer<'static>> {
+        // Unlike native certificates, these are not pre-filtered: the caller asked for each of
+        // them, so one the verifier cannot parse fails the build rather than being dropped, and
+        // webpki would also drop some that the platform's own parser, used on Apple platforms and
+        // Windows, accepts.
+        #[allow(unused_mut)]
+        let mut extra_roots = self.store;
+        #[cfg(feature = "native-certs")]
+        if self.native_certs_needed {
+            extra_roots.extend(parsable_native_certs(self.native_certs));
+        }
+        #[cfg(feature = "webpki-root-certs")]
+        if self.webpki_root_certs {
+            extra_roots.extend(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+        }
+        extra_roots
+    }
+
     fn builder(self) -> io::Result<ConfigBuilder<ClientConfig, WantsClientCert>> {
         let builder = ClientConfig::builder_with_provider(crypto_provider()?)
             .with_safe_default_protocol_versions()
             .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
         #[cfg(feature = "platform-verifier")]
-        {
-            if self.platform_verifier {
-                let provider = builder.crypto_provider().clone();
-                // Unlike native certificates, these are not pre-filtered: the caller asked for each
-                // of them, so one the verifier cannot parse fails the build rather than being
-                // dropped, and webpki would also drop some that the platform's own parser, used on
-                // Apple platforms and Windows, accepts.
-                #[allow(unused_mut)]
-                let mut extra_roots = self.store;
-                #[cfg(feature = "native-certs")]
-                if self.native_certs_needed {
-                    extra_roots.extend(parsable_native_certs(self.native_certs));
-                }
-                let verifier = if extra_roots.is_empty() {
-                    rustls_platform_verifier::Verifier::new(provider)
-                } else {
-                    // `rustls-platform-verifier` has no `new_with_extra_roots` on Android: its
-                    // trust decisions are delegated to the platform and cannot be augmented from
-                    // Rust. Refuse rather than silently trusting fewer roots than the caller asked
-                    // for.
-                    #[cfg(target_os = "android")]
-                    return Err(io::Error::other(
-                        "extra root certificates cannot be combined with the platform verifier on Android",
-                    ));
-                    #[cfg(not(target_os = "android"))]
-                    rustls_platform_verifier::Verifier::new_with_extra_roots(extra_roots, provider)
-                };
-                let verifier =
-                    verifier.map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-                // `.dangerous()` is the rustls API for supplying a custom verifier;
-                // it does not bypass verification — `Verifier` delegates to the OS store.
-                return Ok(builder
-                    .dangerous()
-                    .with_custom_certificate_verifier(Arc::new(verifier)));
-            }
+        if self.platform_verifier {
+            let provider = builder.crypto_provider().clone();
+            let extra_roots = self.platform_verifier_extra_roots();
+            let verifier = if extra_roots.is_empty() {
+                rustls_platform_verifier::Verifier::new(provider)
+            } else {
+                // `rustls-platform-verifier` has no `new_with_extra_roots` on Android: its
+                // trust decisions are delegated to the platform and cannot be augmented from
+                // Rust. Refuse rather than silently trusting fewer roots than the caller asked
+                // for.
+                #[cfg(target_os = "android")]
+                return Err(io::Error::other(
+                    "extra root certificates cannot be combined with the platform verifier on Android",
+                ));
+                #[cfg(not(target_os = "android"))]
+                rustls_platform_verifier::Verifier::new_with_extra_roots(extra_roots, provider)
+            };
+            let verifier =
+                verifier.map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            // `.dangerous()` is the rustls API for supplying a custom verifier;
+            // it does not bypass verification — `Verifier` delegates to the OS store.
+            return Ok(builder
+                .dangerous()
+                .with_custom_certificate_verifier(Arc::new(verifier)));
         }
         let mut store = RootCertStore::empty();
+        #[cfg(feature = "webpki-root-certs")]
+        if self.webpki_root_certs {
+            store.extend(webpki_trust_anchors().iter().cloned());
+        }
         let roots = self.store.into_iter();
         #[cfg(feature = "native-certs")]
         let roots = roots.chain(self.native_certs);
@@ -937,6 +993,40 @@ mod tests {
         let valid = webpki_root_certs::TLS_SERVER_ROOT_CERTS[0].clone();
         let invalid = CertificateDer::from(vec![0x00, 0x01, 0x02]);
         assert_eq!(parsable_native_certs(vec![invalid, valid.clone()]), [valid]);
+    }
+
+    #[test]
+    #[cfg(feature = "webpki-root-certs")]
+    fn webpki_trust_anchors_clone_without_copying() {
+        let anchors = webpki_trust_anchors();
+        assert_eq!(
+            anchors.len(),
+            webpki_root_certs::TLS_SERVER_ROOT_CERTS.len()
+        );
+        // Clones of borrowed anchors share their data; owned ones would copy it.
+        for anchor in anchors {
+            let clone = anchor.clone();
+            assert_eq!(clone.subject.as_ptr(), anchor.subject.as_ptr());
+        }
+    }
+
+    #[test]
+    #[cfg(feature = "webpki-root-certs")]
+    fn config_debug_output_stays_small() {
+        let config = RustlsConnectorConfig::new_with_webpki_root_certs()
+            .with_parsable_certificates(vec![CertificateDer::from(vec![0x00; 1024])]);
+        let debug = format!("{config:?}");
+        assert!(debug.len() < 200, "{debug}");
+        assert!(debug.contains("extra_roots: 1"), "{debug}");
+    }
+
+    #[test]
+    #[cfg(all(feature = "platform-verifier", feature = "webpki-root-certs"))]
+    fn platform_verifier_gets_webpki_roots() {
+        let roots = RustlsConnectorConfig::new_with_platform_verifier()
+            .with_webpki_root_certs()
+            .platform_verifier_extra_roots();
+        assert_eq!(roots, webpki_root_certs::TLS_SERVER_ROOT_CERTS);
     }
 
     // Everything below needs a crypto provider to build a connector, or shares the scripted
