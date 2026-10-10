@@ -323,8 +323,13 @@ impl RustlsConnectorConfig {
     /// # Errors
     ///
     /// Returns an error if the crypto provider does not support the default protocol versions, the
-    /// verifier cannot be initialized, no valid root certificate could be loaded, or key_der is
-    /// invalid.
+    /// verifier cannot be initialized, or no valid root certificate could be loaded.
+    ///
+    /// Also returns an error with kind [`InvalidData`](io::ErrorKind::InvalidData) if key_der is
+    /// invalid. When the crypto provider exposes the public key of key_der, as the built-in ones
+    /// do, it also does if cert_chain is empty, its first certificate cannot be parsed, or that
+    /// certificate does not match key_der. rustls words some of these errors as if the peer had
+    /// sent the certificate.
     ///
     /// # Panics
     ///
@@ -452,12 +457,7 @@ impl RustlsConnector {
 
 fn server_name(domain: &str) -> io::Result<ServerName<'static>> {
     Ok(ServerName::try_from(domain)
-        .map_err(|err| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("Invalid domain name: {err:?}"),
-            )
-        })?
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?
         .to_owned())
 }
 
@@ -641,7 +641,8 @@ impl<S: 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => f.write_str("Handshake needs another I/O attempt"),
-            HandshakeError::Failure(err) => f.write_fmt(format_args!("IO error: {err}")),
+            // The error itself is the source, so that error reporters don't print it twice.
+            HandshakeError::Failure(_) => f.write_str("TLS handshake failed"),
         }
     }
 }
@@ -691,9 +692,9 @@ mod tests {
     fn handshake_error_failure_display() {
         let err: HandshakeError<std::net::TcpStream> =
             HandshakeError::Failure(io::Error::other("test error"));
-        assert!(err.to_string().contains("test error"));
+        assert_eq!(err.to_string(), "TLS handshake failed");
         assert!(format!("{err:?}").contains("test error"));
-        assert!(err.source().is_some());
+        assert_eq!(err.source().unwrap().to_string(), "test error");
     }
 
     // Everything below needs a crypto provider to build a connector, or shares the scripted
@@ -888,6 +889,16 @@ mod tests {
             let io: Box<dyn LocalIo> = Box::new(ScriptedIo::default());
             let mid = expect_would_block(test_connector().connect("example.com", io));
             expect_would_block(mid.handshake());
+        }
+
+        #[test]
+        fn invalid_domain_keeps_typed_error() {
+            let err = expect_failure(
+                test_connector().connect("not a valid host!", ScriptedIo::default()),
+            );
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            let inner = err.get_ref().unwrap();
+            assert!(inner.is::<rustls::pki_types::InvalidDnsNameError>());
         }
 
         #[test]
