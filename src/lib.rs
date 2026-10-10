@@ -26,7 +26,7 @@
 //!
 //! | Flag | Notes |
 //! |------|-------|
-//! | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
+//! | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
 //! | `rustls--ring` | Uses ring (more portable) |
 //!
 //! A process-level default installed with
@@ -524,6 +524,17 @@ impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(feature = "rustls--aws_lc_rs")]
+    fn aws_lc_rs_prefers_post_quantum_key_exchange() {
+        // Also when both provider features are enabled.
+        let provider = crypto_provider().unwrap();
+        assert_eq!(
+            provider.kx_groups[0].name(),
+            rustls::NamedGroup::X25519MLKEM768
+        );
+    }
 
     #[test]
     fn handshake_error_failure_display() {

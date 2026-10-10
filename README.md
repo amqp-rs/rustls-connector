@@ -29,7 +29,7 @@ feature.
 
 | Flag | Notes |
 |------|-------|
-| `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
+| `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
 | `rustls--ring` | Uses ring (more portable, e.g. builds on Windows) |
 
 An installed process-level rustls crypto provider takes precedence. If both
