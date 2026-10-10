@@ -5,13 +5,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```sh
-cargo check --all --bins --examples --tests --all-features   # check compilation
-cargo test                                                    # run tests
-cargo fmt --all                                               # format code
-cargo fmt --all -- --check                                    # check formatting
-cargo clippy --all-features -- -W clippy::all                 # lint
-cargo semver-checks                                           # check semver compliance
-cargo audit                                                   # security audit
+RUSTFLAGS="-D warnings" cargo hack check --each-feature --all-targets --locked  # check every feature, as CI does
+cargo test                                                                      # run tests (default features)
+cargo hack test --each-feature --all-targets                                    # run tests for every feature
+cargo fmt --all                                                                 # format code
+cargo fmt --all -- --check                                                      # check formatting
+cargo hack clippy --each-feature --all-targets --locked -- -D warnings          # lint, as CI does
+RUSTDOCFLAGS="-D warnings" cargo hack doc --each-feature --no-deps \
+    --document-private-items --locked                                           # check docs, as CI does
+cargo semver-checks                                                             # check semver compliance
+cargo audit                                                                     # security audit
 ```
 
 Unit tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module; `tests/installed_provider.rs`, which installs a process-level crypto provider, is a test binary of its own and runs with or without one.
@@ -43,3 +46,5 @@ Each synchronous `handshake()` call flushes the underlying stream, makes at most
 ## CI
 
 The workflows in `.github/workflows/` delegate to shared composite actions in [`amqp-rs/actions`](https://github.com/amqp-rs/actions). They reference those actions as `@main` on purpose: that repository is ours, and it keeps action bumps in sync across all amqp-rs repositories. Do not pin them to a SHA or tag. For the same reason, `.github/dependabot.yml` only tracks `cargo`, and `amqp-rs/actions` bumps the third-party actions itself.
+
+`build-and-test.yaml` passes extra feature sets to the shared build action (`test-features`) so the tests gated on non-default features run, including without a crypto provider feature (that set and the ring one only on Linux stable, as they test nothing OS- or toolchain-specific), and has an `android` job that checks the Android-only code paths for `aarch64-linux-android`, test targets included, as they hold compile-time pins of the platform-verifier constants. The shared build action cannot check another target, so that job only uses it to set up the toolchain, cache and `RUSTFLAGS`, and runs `cargo check` itself.

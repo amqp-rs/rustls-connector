@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - rustls-connector-0.23.x
     tags:
       - "**"
   pull_request:
