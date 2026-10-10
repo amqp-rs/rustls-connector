@@ -100,6 +100,8 @@ use rustls::{
     crypto::CryptoProvider,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
 };
+#[cfg(feature = "futures")]
+use std::{pin::Pin, task::Poll};
 
 use std::{
     error::Error,
@@ -420,8 +422,7 @@ impl RustlsConnector {
     /// failure when we couldn't complete the handshake
     // FIXME: The `'static` bounds here and on `MidHandshakeTlsStream::handshake` exclude borrowed
     // streams. Lifting them is a breaking change: downstream code may rely on the `'static` bound
-    // of `HandshakeError<S>` as an implied bound. `connect_async` also requires `Send + 'static`
-    // streams without needing either.
+    // of `HandshakeError<S>` as an implied bound.
     #[allow(clippy::result_large_err)]
     pub fn connect<S: Read + Write + 'static>(
         &self,
@@ -439,19 +440,56 @@ impl RustlsConnector {
     }
 
     #[cfg(feature = "futures")]
-    /// Connect to the given host asynchronously
+    /// Connect to the given host asynchronously, over an owned or borrowed stream that does not
+    /// need to be `Send`
+    ///
+    /// The returned future borrows neither the connector nor `domain`, and is `Send` and `'static`
+    /// when the stream is, so with an owned stream it can be spawned. The TLS connection is set up
+    /// right away, generating key shares and taking a session resumption ticket from the
+    /// connector, so the future only drives the handshake.
+    ///
+    /// futures-rustls drives the handshake and the returned stream. Unlike
+    /// [`connect`](Self::connect), it keeps polling a stream whose writes accept no bytes: the
+    /// handshake, and flushing or closing the returned stream, then spin, and writes to that
+    /// stream end up pending forever. The handshake also stalls if the stream buffers its data and
+    /// returns `Pending` from a flush. And with a zero buffer limit, writes to the returned stream
+    /// spin.
     ///
     /// # Errors
     ///
-    /// Returns a [`io::Error`] containing the failure when we couldn't complete the TLS handshake
-    pub async fn connect_async<S: AsyncRead + AsyncWrite + Send + Unpin + 'static>(
+    /// The future resolves to an [`io::Error`] containing the failure when we couldn't complete
+    /// the TLS handshake. TLS errors have kind [`InvalidData`](io::ErrorKind::InvalidData), as
+    /// with [`connect`](Self::connect).
+    pub fn connect_async<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         domain: &str,
         stream: S,
-    ) -> io::Result<AsyncTlsStream<S>> {
-        futures_rustls::TlsConnector::from(self.0.clone())
-            .connect(server_name(domain)?, stream)
-            .await
+    ) -> impl Future<Output = io::Result<AsyncTlsStream<S>>> + use<S> {
+        // Not an async block, which would keep its inputs next to the handshake they moved into.
+        let mut connect = server_name(domain)
+            .map(|domain| {
+                futures_rustls::TlsConnector::from(self.0.clone()).connect(domain, stream)
+            })
+            .map_err(Some);
+        std::future::poll_fn(move |cx| match &mut connect {
+            Ok(connect) => Pin::new(connect)
+                .poll(cx)
+                .map_err(tls_errors_as_invalid_data),
+            Err(err) => Poll::Ready(Err(err.take().expect("polled after completion"))),
+        })
+    }
+}
+
+/// futures-rustls reports a failure to create the TLS connection with kind `Other`, where
+/// [`RustlsConnector::connect`] and rustls's own I/O helpers use `InvalidData`.
+#[cfg(feature = "futures")]
+fn tls_errors_as_invalid_data(err: io::Error) -> io::Error {
+    if err.kind() != io::ErrorKind::Other {
+        return err;
+    }
+    match err.downcast::<rustls::Error>() {
+        Ok(err) => io::Error::new(io::ErrorKind::InvalidData, err),
+        Err(err) => err,
     }
 }
 
@@ -755,6 +793,7 @@ mod tests {
         #[derive(Debug, Default)]
         struct Calls {
             reads: usize,
+            writes: usize,
             flushes: usize,
         }
 
@@ -802,6 +841,7 @@ mod tests {
 
         impl Write for ScriptedIo {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.calls.writes += 1;
                 let step = self.writes.pop_front();
                 step.map_or(Ok(buf.len()), |step| step.write(buf.len()))
             }
@@ -810,6 +850,55 @@ mod tests {
                 self.calls.flushes += 1;
                 self.flushes.pop_front().map_or(Ok(()), Step::flush)
             }
+        }
+
+        /// Adapts a synchronous test transport to async I/O, where it would block.
+        #[cfg(feature = "futures")]
+        fn pending_on_would_block<T>(result: io::Result<T>) -> Poll<io::Result<T>> {
+            match result {
+                Err(err) if err.kind() == io::ErrorKind::WouldBlock => Poll::Pending,
+                result => Poll::Ready(result),
+            }
+        }
+
+        /// Implements async I/O for a synchronous test transport with `pending_on_would_block`.
+        #[cfg(feature = "futures")]
+        macro_rules! impl_async_io {
+            ($io:ty) => {
+                impl AsyncRead for $io {
+                    fn poll_read(
+                        self: Pin<&mut Self>,
+                        _: &mut std::task::Context<'_>,
+                        buf: &mut [u8],
+                    ) -> Poll<io::Result<usize>> {
+                        pending_on_would_block(self.get_mut().read(buf))
+                    }
+                }
+
+                impl AsyncWrite for $io {
+                    fn poll_write(
+                        self: Pin<&mut Self>,
+                        _: &mut std::task::Context<'_>,
+                        buf: &[u8],
+                    ) -> Poll<io::Result<usize>> {
+                        pending_on_would_block(self.get_mut().write(buf))
+                    }
+
+                    fn poll_flush(
+                        self: Pin<&mut Self>,
+                        _: &mut std::task::Context<'_>,
+                    ) -> Poll<io::Result<()>> {
+                        pending_on_would_block(self.get_mut().flush())
+                    }
+
+                    fn poll_close(
+                        self: Pin<&mut Self>,
+                        _: &mut std::task::Context<'_>,
+                    ) -> Poll<io::Result<()>> {
+                        Poll::Ready(Ok(()))
+                    }
+                }
+            };
         }
 
         fn expect_would_block<S: Read + Write + 'static>(
@@ -976,59 +1065,101 @@ mod tests {
             assert!(mid.wants_read());
         }
 
-        #[cfg(feature = "futures")]
+        /// A connector whose configuration rustls rejects when creating a connection.
+        fn invalid_connector() -> RustlsConnector {
+            let mut config = ClientConfig::clone(&test_connector().0);
+            config.max_fragment_size = Some(10);
+            config.into()
+        }
+
         #[test]
-        fn async_connect_starts_handshake() {
+        fn invalid_connection_config_fails() {
+            let err =
+                expect_failure(invalid_connector().connect("example.com", ScriptedIo::default()));
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+        }
+
+        #[cfg(feature = "futures")]
+        mod futures {
+            use super::*;
+
             use std::{
-                pin::{Pin, pin},
-                sync::{
-                    Arc,
-                    atomic::{AtomicUsize, Ordering},
-                },
-                task::{Context, Poll, Waker},
+                pin::pin,
+                task::{Context, Waker},
             };
 
-            /// Accepts every write, never yields data.
-            #[derive(Debug, Default)]
-            struct SilentPeer(Arc<AtomicUsize>);
+            impl_async_io!(ScriptedIo);
 
-            impl AsyncRead for SilentPeer {
-                fn poll_read(
-                    self: Pin<&mut Self>,
-                    _: &mut Context<'_>,
-                    _: &mut [u8],
-                ) -> Poll<io::Result<usize>> {
-                    Poll::Pending
+            fn poll_once<F: Future>(future: F) -> Poll<F::Output> {
+                pin!(future).poll(&mut Context::from_waker(Waker::noop()))
+            }
+
+            fn expect_async_failure<T>(future: impl Future<Output = io::Result<T>>) -> io::Error {
+                match poll_once(future) {
+                    Poll::Ready(Err(err)) => err,
+                    Poll::Ready(Ok(_)) => panic!("expected a failure, got a TLS stream"),
+                    Poll::Pending => panic!("expected a failure, got Pending"),
                 }
             }
 
-            impl AsyncWrite for SilentPeer {
-                fn poll_write(
-                    self: Pin<&mut Self>,
-                    _: &mut Context<'_>,
-                    buf: &[u8],
-                ) -> Poll<io::Result<usize>> {
-                    self.0.fetch_add(buf.len(), Ordering::Relaxed);
-                    Poll::Ready(Ok(buf.len()))
-                }
-
-                fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-                    Poll::Ready(Ok(()))
-                }
-
-                fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
-                    Poll::Ready(Ok(()))
-                }
+            #[test]
+            fn async_connect_starts_handshake() {
+                let mut io = ScriptedIo::default();
+                let poll = poll_once(test_connector().connect_async("example.com", &mut io));
+                assert!(poll.is_pending());
+                // The ClientHello went out.
+                assert!(io.calls.writes > 0);
             }
 
-            let written = Arc::default();
-            let connector = test_connector();
-            let mut future =
-                pin!(connector.connect_async("example.com", SilentPeer(Arc::clone(&written))));
-            let mut cx = Context::from_waker(Waker::noop());
-            assert!(future.as_mut().poll(&mut cx).is_pending());
-            // The ClientHello went out.
-            assert!(written.load(Ordering::Relaxed) > 0);
+            #[test]
+            fn async_connect_accepts_borrowed_non_send_stream() {
+                trait LocalIo: AsyncRead + AsyncWrite + Unpin {}
+                impl<T: AsyncRead + AsyncWrite + Unpin> LocalIo for T {}
+
+                let mut io: Box<dyn LocalIo> = Box::new(ScriptedIo::default());
+                let poll = poll_once(test_connector().connect_async("example.com", &mut io));
+                assert!(poll.is_pending());
+            }
+
+            #[test]
+            fn async_connect_future_is_static() {
+                fn spawnable<F: Future + Send + 'static>(future: F) -> F {
+                    future
+                }
+
+                let connector = test_connector();
+                let domain = String::from("example.com");
+                let future = spawnable(connector.connect_async(&domain, ScriptedIo::default()));
+                drop((connector, domain));
+                assert!(poll_once(future).is_pending());
+            }
+
+            #[test]
+            fn async_connect_reports_errors_like_connect() {
+                let connector = invalid_connector();
+                let err = expect_async_failure(
+                    connector.connect_async("example.com", ScriptedIo::default()),
+                );
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+            }
+
+            #[test]
+            fn async_invalid_domain_keeps_typed_error() {
+                let connect =
+                    test_connector().connect_async("not a valid host!", ScriptedIo::default());
+                let err = expect_async_failure(connect);
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData);
+                let inner = err.get_ref().unwrap();
+                assert!(inner.is::<rustls::pki_types::InvalidDnsNameError>());
+            }
+
+            #[test]
+            fn async_peer_closing_fails() {
+                let io = ScriptedIo::default().reads([Step::Zero]);
+                let err = expect_async_failure(test_connector().connect_async("example.com", io));
+                // Not a TLS error, so it keeps its kind.
+                assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+            }
         }
 
         #[test]
