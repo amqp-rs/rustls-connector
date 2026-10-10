@@ -413,7 +413,12 @@ impl RustlsConnector {
             server_name(domain).map_err(HandshakeError::Failure)?,
         )
         .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-        MidHandshakeTlsStream { session, stream }.handshake()
+        MidHandshakeTlsStream {
+            session,
+            stream,
+            write_blocked: false,
+        }
+        .handshake()
     }
 
     #[cfg(feature = "futures")]
@@ -449,13 +454,10 @@ fn server_name(domain: &str) -> io::Result<ServerName<'static>> {
 pub struct MidHandshakeTlsStream<S: Read + Write> {
     session: ClientConnection,
     stream: S,
+    write_blocked: bool,
 }
 
 impl<S: Read + Write> MidHandshakeTlsStream<S> {
-    fn needs_handshake_io(&self) -> bool {
-        self.session.is_handshaking() || self.session.wants_write()
-    }
-
     /// Get a reference to the inner stream
     pub fn get_ref(&self) -> &S {
         &self.stream
@@ -465,13 +467,23 @@ impl<S: Read + Write> MidHandshakeTlsStream<S> {
     pub fn get_mut(&mut self) -> &mut S {
         &mut self.stream
     }
-}
 
-fn is_retryable_handshake_io(error: &io::Error) -> bool {
-    matches!(
-        error.kind(),
-        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-    )
+    /// Whether the handshake is waiting for the inner stream to accept or flush data.
+    ///
+    /// After a [`HandshakeError::WouldBlock`], wait for the inner stream to become writable before
+    /// retrying the handshake when this returns `true`, and for it to become readable otherwise.
+    #[must_use]
+    pub fn wants_write(&self) -> bool {
+        self.write_blocked || self.session.wants_write()
+    }
+
+    /// Whether the handshake is waiting for data from the peer.
+    ///
+    /// See [`wants_write`](Self::wants_write).
+    #[must_use]
+    pub fn wants_read(&self) -> bool {
+        !self.wants_write() && self.session.wants_read()
+    }
 }
 
 impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
@@ -483,34 +495,112 @@ impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
     /// failure when we couldn't complete the handshake
     #[allow(clippy::result_large_err)]
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
-        match self.stream.flush() {
-            Ok(()) => {}
-            Err(e) if is_retryable_handshake_io(&e) => {
-                return Err(HandshakeError::WouldBlock(self));
-            }
-            Err(e) => return Err(e.into()),
+        let mut io = HandshakeIo {
+            stream: &mut self.stream,
+            write_blocked: false,
+        };
+        let result = drive_handshake_io(&mut self.session, &mut io);
+        self.write_blocked = io.write_blocked;
+        match result {
+            Ok(()) => Ok(TlsStream::new(self.session, self.stream)),
+            Err(e) if is_retryable_handshake_io(&e) => Err(HandshakeError::WouldBlock(self)),
+            Err(e) => Err(e.into()),
         }
+    }
+}
 
-        if !self.needs_handshake_io() {
-            return Ok(TlsStream::new(self.session, self.stream));
-        }
+/// Make one attempt at the pending handshake I/O, returning `Ok` once the handshake is complete
+/// and all of it has been flushed to the inner stream.
+fn drive_handshake_io<IO: Read + Write>(
+    session: &mut ClientConnection,
+    io: &mut IO,
+) -> io::Result<()> {
+    let pending = |session: &ClientConnection| session.is_handshaking() || session.wants_write();
 
-        match self.session.complete_io(&mut self.stream) {
-            Err(e) if is_retryable_handshake_io(&e) => {
-                return Err(HandshakeError::WouldBlock(self));
-            }
-            Err(e) => return Err(e.into()),
-            Ok((0, 0)) if self.needs_handshake_io() => {
-                return Err(io::Error::from(io::ErrorKind::UnexpectedEof).into());
-            }
-            _ => {}
-        }
+    // A previous attempt may have handed data over to a buffering stream that then failed to
+    // flush it. rustls does not track data it handed over, so flush unconditionally.
+    io.flush()?;
+    if !pending(session) {
+        return Ok(());
+    }
+    // `complete_io` gives up without an error when the peer closes the connection while we still
+    // have data to send.
+    if session.complete_io(io)? == (0, 0) && pending(session) {
+        return Err(io::ErrorKind::UnexpectedEof.into());
+    }
+    if pending(session) {
+        Err(io::ErrorKind::WouldBlock.into())
+    } else {
+        Ok(())
+    }
+}
 
-        if self.needs_handshake_io() {
-            Err(HandshakeError::WouldBlock(self))
-        } else {
-            Ok(TlsStream::new(self.session, self.stream))
+/// Whether the handshake can be retried after this error, once the stream is ready.
+///
+/// `NotConnected` is what macOS and the BSDs return while a non-blocking connect is in progress,
+/// which openssl and native-tls treat as `WouldBlock` too. `Interrupted` never gets here: rustls
+/// retries interrupted reads, and `HandshakeIo` interrupted writes and flushes.
+fn is_retryable_handshake_io(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::WouldBlock | io::ErrorKind::NotConnected
+    )
+}
+
+/// The inner stream as seen by the handshake: interrupted writes and flushes are retried in place,
+/// as rustls already does for reads, blocked writes are recorded, and zero-length writes fail.
+struct HandshakeIo<'a, S> {
+    stream: &'a mut S,
+    write_blocked: bool,
+}
+
+impl<S> HandshakeIo<'_, S> {
+    fn retry_write<T>(&mut self, mut op: impl FnMut(&mut S) -> io::Result<T>) -> io::Result<T> {
+        let result = retry_interrupted(|| op(self.stream));
+        if let Err(err) = &result {
+            self.write_blocked |= is_retryable_handshake_io(err);
         }
+        result
+    }
+}
+
+/// Run an I/O operation again for as long as it is interrupted, as std's helpers do.
+fn retry_interrupted<T>(mut op: impl FnMut() -> io::Result<T>) -> io::Result<T> {
+    loop {
+        match op() {
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => {}
+            result => return result,
+        }
+    }
+}
+
+/// Fail writes that accept no bytes, as `write_all` does: rustls would otherwise stop writing
+/// without an error, and leave the rest of the handshake unsent.
+fn fail_zero_write(written: io::Result<usize>, len: usize) -> io::Result<usize> {
+    match written {
+        Ok(0) if len > 0 => Err(io::ErrorKind::WriteZero.into()),
+        written => written,
+    }
+}
+
+impl<S: Read> Read for HandshakeIo<'_, S> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.stream.read(buf)
+    }
+}
+
+impl<S: Write> Write for HandshakeIo<'_, S> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        fail_zero_write(self.retry_write(|stream| stream.write(buf)), buf.len())
+    }
+
+    fn write_vectored(&mut self, bufs: &[io::IoSlice<'_>]) -> io::Result<usize> {
+        let len = bufs.iter().map(|buf| buf.len()).sum();
+        fail_zero_write(self.retry_write(|stream| stream.write_vectored(bufs)), len)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.retry_write(|stream| stream.flush())
     }
 }
 
@@ -523,8 +613,10 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 /// An error returned while performing the handshake
 #[allow(clippy::large_enum_variant)]
 pub enum HandshakeError<S: Read + Write + Send + 'static> {
-    /// I/O returned `WouldBlock` or `Interrupted` during the handshake.
-    /// The handshake state is preserved so it can be retried.
+    /// The inner stream is not ready: it returned `WouldBlock`, or `NotConnected` while a
+    /// non-blocking connect is in progress. The handshake state is preserved so it can be retried
+    /// once [`MidHandshakeTlsStream::wants_write`] tells which readiness to wait for.
+    /// `Interrupted` errors are retried right away instead.
     WouldBlock(MidHandshakeTlsStream<S>),
     /// We hit a critical failure.
     Failure(io::Error),
@@ -589,7 +681,8 @@ mod tests {
         assert!(err.source().is_some());
     }
 
-    // Everything below needs a crypto provider to build a connector.
+    // Everything below needs a crypto provider to build a connector, or shares the scripted
+    // transport of the tests that do.
     #[cfg(any(feature = "rustls--aws_lc_rs", feature = "rustls--ring"))]
     mod with_provider {
         use super::*;
@@ -616,10 +709,31 @@ mod tests {
         /// The outcome of one call on a [`ScriptedIo`].
         #[derive(Debug)]
         enum Step {
-            /// Reads yield these bytes; writes accept the whole buffer; flushes succeed.
+            /// Reads yield these bytes; writes accept as many bytes; flushes succeed.
             Ok(&'static [u8]),
+            /// Reads report EOF; writes accept no bytes.
+            Zero,
             /// The call fails with this error kind.
             Err(io::ErrorKind),
+        }
+
+        impl Step {
+            /// The outcome of a write of `len` bytes.
+            fn write(self, len: usize) -> io::Result<usize> {
+                match self {
+                    Step::Ok(data) => Ok(data.len().min(len)),
+                    Step::Zero => Ok(0),
+                    Step::Err(kind) => Err(kind.into()),
+                }
+            }
+
+            /// The outcome of a flush.
+            fn flush(self) -> io::Result<()> {
+                match self {
+                    Step::Err(kind) => Err(kind.into()),
+                    Step::Ok(_) | Step::Zero => Ok(()),
+                }
+            }
         }
 
         #[derive(Debug, Default)]
@@ -663,6 +777,7 @@ mod tests {
                         buf[..data.len()].copy_from_slice(data);
                         Ok(data.len())
                     }
+                    Some(Step::Zero) => Ok(0),
                     Some(Step::Err(kind)) => Err(kind.into()),
                     None => Err(io::ErrorKind::WouldBlock.into()),
                 }
@@ -671,18 +786,13 @@ mod tests {
 
         impl Write for ScriptedIo {
             fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                match self.writes.pop_front() {
-                    Some(Step::Err(kind)) => Err(kind.into()),
-                    Some(Step::Ok(_)) | None => Ok(buf.len()),
-                }
+                let step = self.writes.pop_front();
+                step.map_or(Ok(buf.len()), |step| step.write(buf.len()))
             }
 
             fn flush(&mut self) -> io::Result<()> {
                 self.calls.flushes += 1;
-                match self.flushes.pop_front() {
-                    Some(Step::Err(kind)) => Err(kind.into()),
-                    Some(Step::Ok(_)) | None => Ok(()),
-                }
+                self.flushes.pop_front().map_or(Ok(()), Step::flush)
             }
         }
 
@@ -693,6 +803,16 @@ mod tests {
                 Err(HandshakeError::WouldBlock(mid)) => mid,
                 Err(HandshakeError::Failure(err)) => panic!("expected WouldBlock, got {err:?}"),
                 Ok(_) => panic!("expected WouldBlock, got a TLS stream"),
+            }
+        }
+
+        fn expect_failure<S: Read + Write + Send + 'static>(
+            result: Result<TlsStream<S>, HandshakeError<S>>,
+        ) -> io::Error {
+            match result {
+                Err(HandshakeError::Failure(err)) => err,
+                Err(HandshakeError::WouldBlock(_)) => panic!("expected a failure, got WouldBlock"),
+                Ok(_) => panic!("expected a failure, got a TLS stream"),
             }
         }
 
@@ -719,16 +839,88 @@ mod tests {
         }
 
         #[test]
-        fn interrupted_io_preserves_mid_handshake() {
+        fn interrupted_io_is_retried_in_place() {
             let io = ScriptedIo::default()
+                .reads([Step::Err(io::ErrorKind::Interrupted)])
                 .writes([Step::Err(io::ErrorKind::Interrupted)])
                 .flushes([Step::Err(io::ErrorKind::Interrupted)]);
-            let mut mid = expect_would_block(test_connector().connect("example.com", io));
-            while !mid.stream.writes.is_empty() || mid.session.wants_write() {
-                mid = expect_would_block(mid.handshake());
-            }
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            // Only the read blocked: the ClientHello went out despite the interruptions, and the
+            // interrupted read was retried.
+            assert!(mid.stream.reads.is_empty());
+            assert!(mid.stream.writes.is_empty() && mid.stream.flushes.is_empty());
             assert!(mid.session.is_handshaking());
-            assert!(mid.stream.flushes.is_empty());
+            assert!(!mid.wants_write());
+            assert!(mid.wants_read());
+        }
+
+        #[test]
+        fn not_connected_is_retried() {
+            let io = ScriptedIo::default().writes([Step::Err(io::ErrorKind::NotConnected)]);
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            assert!(mid.wants_write());
+
+            let mid = expect_would_block(mid.handshake());
+            assert!(!mid.wants_write());
+            assert!(mid.wants_read());
+        }
+
+        #[test]
+        fn zero_length_write_fails() {
+            let io = ScriptedIo::default().writes([Step::Zero]);
+            let err = expect_failure(test_connector().connect("example.com", io));
+            assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+        }
+
+        #[test]
+        fn zero_length_write_after_partial_write_fails() {
+            let io = ScriptedIo::default().writes([Step::Ok(&[0; 10]), Step::Zero]);
+            let err = expect_failure(test_connector().connect("example.com", io));
+            assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+        }
+
+        // rustls writes through `write_vectored`: exercise `write` directly.
+        #[test]
+        fn handshake_io_write_retries_interrupted_and_fails_zero() {
+            let mut stream =
+                ScriptedIo::default().writes([Step::Err(io::ErrorKind::Interrupted), Step::Zero]);
+            let mut adapter = HandshakeIo {
+                stream: &mut stream,
+                write_blocked: false,
+            };
+            let err = adapter.write(b"data").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::WriteZero);
+            assert!(!adapter.write_blocked);
+        }
+
+        #[test]
+        fn handshake_io_write_records_blocked_writes() {
+            let mut stream = ScriptedIo::default().writes([Step::Err(io::ErrorKind::WouldBlock)]);
+            let mut adapter = HandshakeIo {
+                stream: &mut stream,
+                write_blocked: false,
+            };
+            let err = adapter.write(b"data").unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::WouldBlock);
+            assert!(adapter.write_blocked);
+        }
+
+        #[test]
+        fn peer_closing_fails() {
+            let io = ScriptedIo::default().reads([Step::Zero]);
+            let err = expect_failure(test_connector().connect("example.com", io));
+            assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+        }
+
+        #[test]
+        fn not_connected_flush_is_retried() {
+            let io = ScriptedIo::default()
+                .flushes([Step::Ok(&[]), Step::Err(io::ErrorKind::NotConnected)]);
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            // The ClientHello left rustls, but the transport has yet to flush it.
+            assert!(!mid.session.wants_write());
+            assert!(mid.wants_write());
+            assert!(!mid.wants_read());
         }
 
         #[test]
@@ -739,10 +931,13 @@ mod tests {
             // The ClientHello left rustls, but the transport has yet to flush it.
             assert!(mid.stream.flushes.is_empty());
             assert!(!mid.session.wants_write());
+            assert!(mid.wants_write());
+            assert!(!mid.wants_read());
 
             let flushes = mid.stream.calls.flushes;
             let mid = expect_would_block(mid.handshake());
             assert!(mid.stream.calls.flushes > flushes);
+            assert!(mid.wants_read());
         }
 
         #[cfg(feature = "futures")]
