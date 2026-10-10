@@ -1042,15 +1042,36 @@ mod tests {
         use super::*;
 
         use std::collections::VecDeque;
+        #[cfg(feature = "futures")]
+        use std::{
+            pin::pin,
+            task::{Context, Waker},
+        };
 
-        /// A connector for tests that never reach certificate verification.
+        /// A config trusting the test CA, which signed the end-to-end server's certificate.
+        fn test_config() -> RustlsConnectorConfig {
+            RustlsConnectorConfig::default().with_parsable_certificates(vec![test_ca()])
+        }
+
+        /// A connector built from [`test_config`].
         fn test_connector() -> RustlsConnector {
-            ClientConfig::builder_with_provider(crypto_provider().unwrap())
-                .with_safe_default_protocol_versions()
+            test_config().connector_with_no_client_auth().unwrap()
+        }
+
+        /// The test CA, which signed the end-to-end server's certificate.
+        fn test_ca() -> CertificateDer<'static> {
+            CertificateDer::from(&include_bytes!("../test-data/ca.der")[..])
+        }
+
+        /// The end-to-end server's certificate, for `example.com`.
+        fn test_cert() -> CertificateDer<'static> {
+            CertificateDer::from(&include_bytes!("../test-data/example.com.der")[..])
+        }
+
+        /// The end-to-end server's private key.
+        fn test_key() -> PrivateKeyDer<'static> {
+            PrivateKeyDer::try_from(&include_bytes!("../test-data/example.com.key.der")[..])
                 .unwrap()
-                .with_root_certificates(RootCertStore::empty())
-                .with_no_client_auth()
-                .into()
         }
 
         #[test]
@@ -1150,6 +1171,12 @@ mod tests {
                 self.calls.flushes += 1;
                 self.flushes.pop_front().map_or(Ok(()), Step::flush)
             }
+        }
+
+        /// Polls `future` once, with a waker that does nothing.
+        #[cfg(feature = "futures")]
+        fn poll_once<F: Future>(future: F) -> Poll<F::Output> {
+            pin!(future).poll(&mut Context::from_waker(Waker::noop()))
         }
 
         /// Adapts a synchronous test transport to async I/O, where it would block.
@@ -1383,16 +1410,7 @@ mod tests {
         mod futures {
             use super::*;
 
-            use std::{
-                pin::pin,
-                task::{Context, Waker},
-            };
-
             impl_async_io!(ScriptedIo);
-
-            fn poll_once<F: Future>(future: F) -> Poll<F::Output> {
-                pin!(future).poll(&mut Context::from_waker(Waker::noop()))
-            }
 
             fn expect_async_failure<T>(future: impl Future<Output = io::Result<T>>) -> io::Error {
                 match poll_once(future) {
@@ -1504,8 +1522,10 @@ mod tests {
         #[test]
         #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
         fn platform_verifier_tolerates_invalid_native_certs() {
-            // Pre-filtered where it needs them, as it would parse them strictly.
-            let mut config = RustlsConnectorConfig::new_with_platform_verifier();
+            // Pre-filtered where it needs them, as it would parse them strictly. The test CA lets
+            // the verifier build without an OS certificate store.
+            let mut config = RustlsConnectorConfig::new_with_platform_verifier()
+                .with_parsable_certificates(vec![test_ca()]);
             config.native_certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02])];
             config.native_certs_needed = true;
             config.connector_with_no_client_auth().unwrap();
@@ -1525,6 +1545,316 @@ mod tests {
             );
             // Callers may downcast to the rustls error.
             assert!(err.get_ref().unwrap().is::<rustls::Error>(), "{err:?}");
+        }
+
+        #[test]
+        fn unusable_client_certificates_are_rejected() {
+            let connector = |chain, key| test_config().connector_with_single_cert(chain, key);
+            connector(vec![test_cert()], test_key()).unwrap();
+            let invalid_key = PrivateKeyDer::Pkcs8(vec![0x00, 0x01, 0x02].into());
+            for (case, chain, key) in [
+                ("empty chain", vec![], test_key()),
+                (
+                    "unparsable certificate",
+                    vec![CertificateDer::from(vec![0x00, 0x01, 0x02])],
+                    test_key(),
+                ),
+                ("mismatched key", vec![test_ca()], test_key()),
+                ("invalid key", vec![test_cert()], invalid_key),
+            ] {
+                let err = connector(chain, key).expect_err(case);
+                assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{case}: {err}");
+            }
+        }
+
+        mod end_to_end {
+            use super::*;
+
+            use std::sync::{Mutex, PoisonError};
+
+            type Pipe = Arc<Mutex<VecDeque<u8>>>;
+
+            /// One end of an in-memory connection. Reads block while there is nothing to read.
+            /// When `buffered`, writes are held back until flushed, and the first flush of each
+            /// batch blocks. `writes_blocked` makes writes block, and `closed` makes reads report
+            /// that the peer closed the connection.
+            #[derive(Debug, Default)]
+            struct PipeEnd {
+                rx: Pipe,
+                tx: Pipe,
+                buffered: bool,
+                pending: Vec<u8>,
+                flush_blocked: bool,
+                writes_blocked: bool,
+                closed: bool,
+            }
+
+            /// The client end of an in-memory connection, with a server for `example.com` on the
+            /// other end.
+            fn pipe(buffered: bool) -> (PipeEnd, Server) {
+                let (a, b) = (Pipe::default(), Pipe::default());
+                let client = PipeEnd {
+                    rx: a.clone(),
+                    tx: b.clone(),
+                    buffered,
+                    ..PipeEnd::default()
+                };
+                let server = PipeEnd {
+                    rx: b,
+                    tx: a,
+                    ..PipeEnd::default()
+                };
+                (client, Server::new(server))
+            }
+
+            impl Read for PipeEnd {
+                fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                    if self.closed {
+                        return Ok(0);
+                    }
+                    let mut rx = self.rx.lock().unwrap_or_else(PoisonError::into_inner);
+                    if rx.is_empty() {
+                        return Err(io::ErrorKind::WouldBlock.into());
+                    }
+                    rx.read(buf)
+                }
+            }
+
+            impl Write for PipeEnd {
+                fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                    if self.writes_blocked {
+                        return Err(io::ErrorKind::WouldBlock.into());
+                    }
+                    if self.buffered {
+                        self.pending.extend_from_slice(buf);
+                    } else {
+                        self.tx
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .extend(buf);
+                    }
+                    Ok(buf.len())
+                }
+
+                fn flush(&mut self) -> io::Result<()> {
+                    if self.pending.is_empty() {
+                        return Ok(());
+                    }
+                    if !self.flush_blocked {
+                        self.flush_blocked = true;
+                        return Err(io::ErrorKind::WouldBlock.into());
+                    }
+                    self.flush_blocked = false;
+                    self.tx
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .extend(self.pending.drain(..));
+                    Ok(())
+                }
+            }
+
+            #[cfg(feature = "futures")]
+            impl_async_io!(PipeEnd);
+
+            struct Server {
+                conn: rustls::ServerConnection,
+                io: PipeEnd,
+            }
+
+            impl Server {
+                fn new(io: PipeEnd) -> Self {
+                    let certs = vec![test_cert(), test_ca()];
+                    let key = test_key();
+                    let config =
+                        rustls::ServerConfig::builder_with_provider(crypto_provider().unwrap())
+                            .with_safe_default_protocol_versions()
+                            .unwrap()
+                            .with_no_client_auth()
+                            .with_single_cert(certs, key)
+                            .unwrap();
+                    let conn = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+                    Self { conn, io }
+                }
+
+                fn pump(&mut self) {
+                    match self.conn.complete_io(&mut self.io) {
+                        Ok(_) => {}
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(err) => panic!("server failed: {err}"),
+                    }
+                }
+            }
+
+            /// A connector trusting the test CA, connected to a server for `example.com`.
+            fn connect(client_io: PipeEnd, server: &mut Server) -> TlsStream<PipeEnd> {
+                try_connect(&test_connector(), client_io, server).unwrap()
+            }
+
+            fn try_connect(
+                connector: &RustlsConnector,
+                client_io: PipeEnd,
+                server: &mut Server,
+            ) -> io::Result<TlsStream<PipeEnd>> {
+                let mut result = connector.connect("example.com", client_io);
+                for _ in 0..100 {
+                    match result {
+                        Ok(tls) => {
+                            // Bounded, so that a client leaving data unsent fails the test
+                            // instead of hanging it.
+                            for _ in 0..10 {
+                                if !server.conn.is_handshaking() {
+                                    return Ok(tls);
+                                }
+                                server.pump();
+                            }
+                            return Err(io::Error::other(
+                                "the client left part of the handshake unsent",
+                            ));
+                        }
+                        Err(HandshakeError::WouldBlock(mid)) => {
+                            server.pump();
+                            result = mid.handshake();
+                        }
+                        Err(HandshakeError::Failure(err)) => return Err(err),
+                    }
+                }
+                Err(io::Error::other("the handshake made no progress"))
+            }
+
+            /// Bounded, so that a flush that never completes fails the test instead of hanging it.
+            fn retry(mut op: impl FnMut() -> io::Result<()>) {
+                for _ in 0..10 {
+                    match op() {
+                        Ok(()) => return,
+                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {}
+                        Err(err) => panic!("flush failed: {err}"),
+                    }
+                }
+                panic!("the flush never completed");
+            }
+
+            fn send_ping(buffered: bool) {
+                let (client_io, mut server) = pipe(buffered);
+                let mut tls = connect(client_io, &mut server);
+                tls.write_all(b"ping").unwrap();
+                retry(|| tls.flush());
+                expect_ping(&mut server);
+            }
+
+            fn expect_ping(server: &mut Server) {
+                server.pump();
+                let mut ping = [0; 4];
+                server.conn.reader().read_exact(&mut ping).unwrap();
+                assert_eq!(&ping, b"ping");
+            }
+
+            /// `connect`'s async counterpart.
+            #[cfg(feature = "futures")]
+            fn async_connect(client_io: PipeEnd, server: &mut Server) -> AsyncTlsStream<PipeEnd> {
+                let mut connect = pin!(test_connector().connect_async("example.com", client_io));
+                // Bounded, so that a stalled handshake fails the test instead of hanging it.
+                let tls = (0..10)
+                    .find_map(|_| {
+                        let poll = poll_once(connect.as_mut());
+                        server.pump();
+                        match poll {
+                            Poll::Ready(tls) => Some(tls.unwrap()),
+                            Poll::Pending => None,
+                        }
+                    })
+                    .expect("the handshake made no progress");
+                assert!(!tls.get_ref().1.is_handshaking());
+                tls
+            }
+
+            #[cfg(feature = "futures")]
+            fn async_send_ping() {
+                let (client_io, mut server) = pipe(false);
+                let mut tls = async_connect(client_io, &mut server);
+                let mut cx = Context::from_waker(Waker::noop());
+                let mut tls = Pin::new(&mut tls);
+                let written = tls.as_mut().poll_write(&mut cx, b"ping");
+                assert!(matches!(written, Poll::Ready(Ok(4))), "{written:?}");
+                retry(|| match tls.as_mut().poll_flush(&mut cx) {
+                    Poll::Ready(result) => result,
+                    Poll::Pending => Err(io::ErrorKind::WouldBlock.into()),
+                });
+                expect_ping(&mut server);
+            }
+
+            #[test]
+            fn peer_closing_before_the_last_flight_fails() {
+                let (client_io, mut server) = pipe(false);
+                let mut mid =
+                    expect_would_block(test_connector().connect("example.com", client_io));
+                server.pump();
+                mid.get_mut().writes_blocked = true;
+                // The client is done with the handshake, except for sending its last flight.
+                let mut mid = expect_would_block(mid.handshake());
+                assert!(!mid.session.is_handshaking() && mid.wants_write());
+                mid.get_mut().closed = true;
+                let err = expect_failure(mid.handshake());
+                assert_eq!(err.kind(), io::ErrorKind::UnexpectedEof);
+            }
+
+            #[test]
+            fn handshake_completes() {
+                send_ping(false);
+            }
+
+            #[test]
+            fn handshake_completes_over_a_buffering_stream() {
+                send_ping(true);
+            }
+
+            #[test]
+            #[cfg(feature = "futures")]
+            fn async_handshake_completes() {
+                async_send_ping();
+            }
+
+            #[test]
+            #[cfg(all(
+                feature = "platform-verifier",
+                feature = "native-certs",
+                any(target_os = "linux", target_os = "freebsd")
+            ))]
+            fn platform_verifier_trusts_native_certs_it_needs() {
+                // There, it parses extra roots like webpki does, which accepts the long-lived test
+                // certificates.
+                let mut config = RustlsConnectorConfig::new_with_platform_verifier();
+                config.native_certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02]), test_ca()];
+                config.native_certs_needed = true;
+                let connector = config.connector_with_no_client_auth().unwrap();
+                let (client_io, mut server) = pipe(false);
+                try_connect(&connector, client_io, &mut server).unwrap();
+            }
+
+            // Not on Apple platforms, which reject the long-lived test certificates whatever the
+            // roots.
+            #[test]
+            #[cfg(all(
+                feature = "platform-verifier",
+                feature = "native-certs",
+                not(target_vendor = "apple")
+            ))]
+            fn platform_verifier_ignores_native_certs_it_does_not_need() {
+                if os_store_is_empty() {
+                    return;
+                }
+                let mut config = RustlsConnectorConfig::new_with_platform_verifier();
+                config.native_certs = vec![test_ca()];
+                config.native_certs_needed = false;
+                let connector = config.connector_with_no_client_auth().unwrap();
+                let (client_io, mut server) = pipe(false);
+                let err = try_connect(&connector, client_io, &mut server)
+                    .expect_err("the platform verifier trusted the native certificates");
+                let inner = err.get_ref().and_then(|err| err.downcast_ref());
+                assert!(
+                    matches!(inner, Some(rustls::Error::InvalidCertificate(_))),
+                    "{err:?}"
+                );
+            }
         }
     }
 }

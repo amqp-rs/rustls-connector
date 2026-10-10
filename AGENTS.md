@@ -17,7 +17,7 @@ cargo semver-checks                                                             
 cargo audit                                                                     # security audit
 ```
 
-Unit tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module; `tests/installed_provider.rs`, which installs a process-level crypto provider, is a test binary of its own and runs with or without one.
+Unit tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module; `tests/installed_provider.rs`, which installs a process-level crypto provider, is a test binary of its own and runs with or without one. `tests::with_provider::end_to_end` completes real handshakes against an in-memory rustls server, using the long-lived test CA and `example.com` certificate in `test-data/`. `tests/native_certs_env.rs` sets `SSL_CERT_FILE`, so it also has a test binary of its own.
 
 ## Architecture
 
