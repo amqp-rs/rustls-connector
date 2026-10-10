@@ -67,10 +67,10 @@
 //! };
 //!
 //! let connector = RustlsConnector::new_with_platform_verifier().unwrap();
-//! let stream = TcpStream::connect("google.com:443").unwrap();
-//! let mut stream = connector.connect("google.com", stream).unwrap();
+//! let stream = TcpStream::connect("rust-lang.org:443").unwrap();
+//! let mut stream = connector.connect("rust-lang.org", stream).unwrap();
 //!
-//! stream.write_all(b"GET / HTTP/1.0\r\n\r\n").unwrap();
+//! stream.write_all(b"GET / HTTP/1.0\r\nHost: rust-lang.org\r\n\r\n").unwrap();
 //! let mut res = vec![];
 //! stream.read_to_end(&mut res).unwrap();
 //! println!("{}", String::from_utf8_lossy(&res));
@@ -81,15 +81,15 @@ pub use rustls;
 /// Reexport of the [`rustls_pki_types`](https://docs.rs/rustls-pki-types) crate.
 pub use rustls::pki_types as rustls_pki_types;
 #[cfg(feature = "native-certs")]
-/// Reexport of the [`rustls_native_certs`](https://docs.rs/rustls-native-certs) crate.
+/// Reexport of the [`rustls_native_certs`](https://docs.rs/rustls-native-certs) crate (requires native-certs feature enabled)
 pub use rustls_native_certs;
 #[cfg(feature = "platform-verifier")]
-/// Reexport of the [`rustls_platform_verifier`](https://docs.rs/rustls-platform-verifier) crate.
+/// Reexport of the [`rustls_platform_verifier`](https://docs.rs/rustls-platform-verifier) crate (requires platform-verifier feature enabled)
 pub use rustls_platform_verifier;
 /// Reexport of the [`rustls_webpki`](https://docs.rs/rustls-webpki) crate.
 pub use webpki;
 #[cfg(feature = "webpki-root-certs")]
-/// Reexport of the [`webpki_root_certs`](https://docs.rs/webpki-root-certs) crate.
+/// Reexport of the [`webpki_root_certs`](https://docs.rs/webpki-root-certs) crate (requires webpki-root-certs feature enabled)
 pub use webpki_root_certs;
 
 #[cfg(feature = "futures")]
@@ -164,7 +164,7 @@ fn crypto_provider() -> io::Result<Arc<CryptoProvider>> {
 pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 
 #[cfg(feature = "futures")]
-/// A rustls client TLS stream wrapping an underlying async I/O stream `S`.
+/// A rustls client TLS stream wrapping an underlying async I/O stream `S` (requires futures feature enabled)
 pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 
 /// Configuration helper for [`RustlsConnector`]
@@ -537,6 +537,12 @@ impl RustlsConnectorConfig {
 /// [`connector_with_no_client_auth`](RustlsConnectorConfig::connector_with_no_client_auth) or
 /// [`connector_with_single_cert`](RustlsConnectorConfig::connector_with_single_cert), or
 /// directly from a `ClientConfig` via the [`From`] impl.
+///
+/// Building a connector can load and parse root certificates, which takes milliseconds with the
+/// OS certificate store: native certificates load it, and so does the platform verifier on Unix
+/// systems other than Apple platforms and Android. Build one and clone it, which only shares the
+/// configuration, rather than building one per connection: reusing a connector also lets rustls
+/// resume TLS sessions.
 #[derive(Clone, Debug)]
 pub struct RustlsConnector(Arc<ClientConfig>);
 
@@ -628,7 +634,7 @@ impl RustlsConnector {
 
     #[cfg(feature = "futures")]
     /// Connect to the given host asynchronously, over an owned or borrowed stream that does not
-    /// need to be `Send`
+    /// need to be `Send` (requires futures feature enabled)
     ///
     /// The returned future borrows neither the connector nor `domain`, and is `Send` and `'static`
     /// when the stream is, so with an owned stream it can be spawned. The TLS connection is set up
