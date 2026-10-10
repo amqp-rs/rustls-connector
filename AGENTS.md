@@ -14,6 +14,8 @@ cargo semver-checks                                           # check semver com
 cargo audit                                                   # security audit
 ```
 
+Tests that build a connector need a crypto provider feature, and live in the `tests::with_provider` module.
+
 ## Architecture
 
 This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connector API modeled after `openssl` and `native-tls`.

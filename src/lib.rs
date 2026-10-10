@@ -524,207 +524,6 @@ impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
 mod tests {
     use super::*;
 
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    #[derive(Debug)]
-    struct PartialTlsRead(usize);
-
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    impl Read for PartialTlsRead {
-        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-            let reads = self.0;
-            self.0 += 1;
-            if reads > 0 {
-                Err(io::ErrorKind::WouldBlock.into())
-            } else {
-                buf[0] = 0x16;
-                Ok(1)
-            }
-        }
-    }
-
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    impl Write for PartialTlsRead {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            Ok(())
-        }
-    }
-
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    #[derive(Debug, Default)]
-    struct InterruptedIo {
-        flushes: usize,
-        writes: usize,
-    }
-
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    impl Read for InterruptedIo {
-        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-            Err(io::ErrorKind::WouldBlock.into())
-        }
-    }
-
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    impl Write for InterruptedIo {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            self.writes += 1;
-            if self.writes == 1 {
-                Err(io::ErrorKind::Interrupted.into())
-            } else {
-                Ok(buf.len())
-            }
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.flushes += 1;
-            if self.flushes == 1 {
-                Err(io::ErrorKind::Interrupted.into())
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    #[cfg(feature = "webpki-root-certs")]
-    #[derive(Debug)]
-    struct BlockingFlush(usize);
-
-    #[cfg(feature = "webpki-root-certs")]
-    impl Read for BlockingFlush {
-        fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
-            Err(io::ErrorKind::WouldBlock.into())
-        }
-    }
-
-    #[cfg(feature = "webpki-root-certs")]
-    impl Write for BlockingFlush {
-        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-            Ok(buf.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            self.0 += 1;
-            if self.0 == 2 {
-                Err(io::ErrorKind::WouldBlock.into())
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    #[test]
-    fn empty_config_fails() {
-        assert!(
-            RustlsConnectorConfig::default()
-                .connector_with_no_client_auth()
-                .is_err()
-        );
-    }
-
-    #[test]
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    fn partial_read_remains_mid_handshake() {
-        #[cfg(feature = "webpki-root-certs")]
-        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
-        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
-        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
-
-        let mid = match connector.connect("example.com", PartialTlsRead(0)) {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert!(mid.session.is_handshaking());
-        assert_eq!(mid.stream.0, 2);
-        assert!(matches!(
-            mid.handshake(),
-            Err(HandshakeError::WouldBlock(_))
-        ));
-    }
-
-    #[test]
-    #[cfg(any(feature = "platform-verifier", feature = "webpki-root-certs"))]
-    fn interrupted_io_preserves_mid_handshake() {
-        #[cfg(feature = "webpki-root-certs")]
-        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
-        #[cfg(all(not(feature = "webpki-root-certs"), feature = "platform-verifier"))]
-        let connector = RustlsConnector::new_with_platform_verifier().unwrap();
-
-        let mid = match connector.connect("example.com", InterruptedIo::default()) {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert_eq!((mid.stream.flushes, mid.stream.writes), (1, 0));
-
-        let mid = match mid.handshake() {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert_eq!((mid.stream.flushes, mid.stream.writes), (2, 1));
-
-        let mid = match mid.handshake() {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert!(mid.session.is_handshaking());
-        assert!(mid.stream.flushes >= 3);
-        assert!(mid.stream.writes >= 2);
-    }
-
-    #[test]
-    #[cfg(feature = "webpki-root-certs")]
-    fn blocked_flush_is_retried() {
-        let connector = RustlsConnector::new_with_webpki_root_certs().unwrap();
-        let mid = match connector.connect("example.com", BlockingFlush(0)) {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert_eq!(mid.stream.0, 2);
-        assert!(!mid.session.wants_write());
-
-        let mid = match mid.handshake() {
-            Err(HandshakeError::WouldBlock(mid)) => mid,
-            other => panic!("expected WouldBlock, got {other:?}"),
-        };
-        assert_eq!(mid.stream.0, 3);
-    }
-
-    #[test]
-    #[cfg(feature = "webpki-root-certs")]
-    fn webpki_root_certs_connector_builds() {
-        RustlsConnector::new_with_webpki_root_certs().unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "platform-verifier")]
-    fn platform_verifier_connector_builds() {
-        RustlsConnector::new_with_platform_verifier().unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "webpki-root-certs")]
-    fn invalid_certificates_are_skipped() {
-        let mut certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02])];
-        certs.extend(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
-        RustlsConnectorConfig::default()
-            .with_parsable_certificates(certs)
-            .connector_with_no_client_auth()
-            .unwrap();
-    }
-
-    #[test]
-    #[cfg(feature = "platform-verifier")]
-    fn platform_verifier_rejects_invalid_extra_roots() {
-        assert!(
-            RustlsConnectorConfig::new_with_platform_verifier()
-                .with_parsable_certificates(vec![CertificateDer::from(vec![0x00, 0x01, 0x02])])
-                .connector_with_no_client_auth()
-                .is_err()
-        );
-    }
-
     #[test]
     fn handshake_error_failure_display() {
         let err: HandshakeError<std::net::TcpStream> =
@@ -732,5 +531,247 @@ mod tests {
         assert!(err.to_string().contains("test error"));
         assert!(format!("{err:?}").contains("test error"));
         assert!(err.source().is_some());
+    }
+
+    // Everything below needs a crypto provider to build a connector.
+    #[cfg(any(feature = "rustls--aws_lc_rs", feature = "rustls--ring"))]
+    mod with_provider {
+        use super::*;
+
+        use std::collections::VecDeque;
+
+        /// A connector for tests that never reach certificate verification.
+        fn test_connector() -> RustlsConnector {
+            ClientConfig::builder_with_provider(crypto_provider().unwrap())
+                .with_safe_default_protocol_versions()
+                .unwrap()
+                .with_root_certificates(RootCertStore::empty())
+                .with_no_client_auth()
+                .into()
+        }
+
+        /// The outcome of one call on a [`ScriptedIo`].
+        #[derive(Debug)]
+        enum Step {
+            /// Reads yield these bytes; writes accept the whole buffer; flushes succeed.
+            Ok(&'static [u8]),
+            /// The call fails with this error kind.
+            Err(io::ErrorKind),
+        }
+
+        #[derive(Debug, Default)]
+        struct Calls {
+            reads: usize,
+            flushes: usize,
+        }
+
+        /// A transport following a per-call script. Once a script runs out, reads return
+        /// `WouldBlock` while writes and flushes succeed.
+        #[derive(Debug, Default)]
+        struct ScriptedIo {
+            reads: VecDeque<Step>,
+            writes: VecDeque<Step>,
+            flushes: VecDeque<Step>,
+            calls: Calls,
+        }
+
+        impl ScriptedIo {
+            fn reads(mut self, steps: impl IntoIterator<Item = Step>) -> Self {
+                self.reads.extend(steps);
+                self
+            }
+
+            fn writes(mut self, steps: impl IntoIterator<Item = Step>) -> Self {
+                self.writes.extend(steps);
+                self
+            }
+
+            fn flushes(mut self, steps: impl IntoIterator<Item = Step>) -> Self {
+                self.flushes.extend(steps);
+                self
+            }
+        }
+
+        impl Read for ScriptedIo {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.calls.reads += 1;
+                match self.reads.pop_front() {
+                    Some(Step::Ok(data)) => {
+                        buf[..data.len()].copy_from_slice(data);
+                        Ok(data.len())
+                    }
+                    Some(Step::Err(kind)) => Err(kind.into()),
+                    None => Err(io::ErrorKind::WouldBlock.into()),
+                }
+            }
+        }
+
+        impl Write for ScriptedIo {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                match self.writes.pop_front() {
+                    Some(Step::Err(kind)) => Err(kind.into()),
+                    Some(Step::Ok(_)) | None => Ok(buf.len()),
+                }
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.calls.flushes += 1;
+                match self.flushes.pop_front() {
+                    Some(Step::Err(kind)) => Err(kind.into()),
+                    Some(Step::Ok(_)) | None => Ok(()),
+                }
+            }
+        }
+
+        fn expect_would_block<S: Read + Write + Send + 'static>(
+            result: Result<TlsStream<S>, HandshakeError<S>>,
+        ) -> MidHandshakeTlsStream<S> {
+            match result {
+                Err(HandshakeError::WouldBlock(mid)) => mid,
+                Err(HandshakeError::Failure(err)) => panic!("expected WouldBlock, got {err:?}"),
+                Ok(_) => panic!("expected WouldBlock, got a TLS stream"),
+            }
+        }
+
+        #[test]
+        fn empty_config_fails() {
+            let err = RustlsConnectorConfig::default()
+                .connector_with_no_client_auth()
+                .unwrap_err();
+            assert!(
+                err.to_string().contains("valid certificates"),
+                "unexpected error: {err}"
+            );
+        }
+
+        #[test]
+        fn partial_read_remains_mid_handshake() {
+            let io = ScriptedIo::default().reads([Step::Ok(&[0x16])]);
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            assert!(mid.session.is_handshaking());
+            // The partial record was consumed, and the next read blocked.
+            assert!(mid.stream.reads.is_empty());
+            assert!(mid.stream.calls.reads >= 2);
+            expect_would_block(mid.handshake());
+        }
+
+        #[test]
+        fn interrupted_io_preserves_mid_handshake() {
+            let io = ScriptedIo::default()
+                .writes([Step::Err(io::ErrorKind::Interrupted)])
+                .flushes([Step::Err(io::ErrorKind::Interrupted)]);
+            let mut mid = expect_would_block(test_connector().connect("example.com", io));
+            while !mid.stream.writes.is_empty() || mid.session.wants_write() {
+                mid = expect_would_block(mid.handshake());
+            }
+            assert!(mid.session.is_handshaking());
+            assert!(mid.stream.flushes.is_empty());
+        }
+
+        #[test]
+        fn blocked_flush_is_retried() {
+            let io = ScriptedIo::default()
+                .flushes([Step::Ok(&[]), Step::Err(io::ErrorKind::WouldBlock)]);
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            // The ClientHello left rustls, but the transport has yet to flush it.
+            assert!(mid.stream.flushes.is_empty());
+            assert!(!mid.session.wants_write());
+
+            let flushes = mid.stream.calls.flushes;
+            let mid = expect_would_block(mid.handshake());
+            assert!(mid.stream.calls.flushes > flushes);
+        }
+
+        #[cfg(feature = "futures")]
+        #[test]
+        fn async_connect_starts_handshake() {
+            use std::{
+                pin::{Pin, pin},
+                sync::{
+                    Arc,
+                    atomic::{AtomicUsize, Ordering},
+                },
+                task::{Context, Poll, Waker},
+            };
+
+            /// Accepts every write, never yields data.
+            #[derive(Debug, Default)]
+            struct SilentPeer(Arc<AtomicUsize>);
+
+            impl AsyncRead for SilentPeer {
+                fn poll_read(
+                    self: Pin<&mut Self>,
+                    _: &mut Context<'_>,
+                    _: &mut [u8],
+                ) -> Poll<io::Result<usize>> {
+                    Poll::Pending
+                }
+            }
+
+            impl AsyncWrite for SilentPeer {
+                fn poll_write(
+                    self: Pin<&mut Self>,
+                    _: &mut Context<'_>,
+                    buf: &[u8],
+                ) -> Poll<io::Result<usize>> {
+                    self.0.fetch_add(buf.len(), Ordering::Relaxed);
+                    Poll::Ready(Ok(buf.len()))
+                }
+
+                fn poll_flush(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                    Poll::Ready(Ok(()))
+                }
+
+                fn poll_close(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<io::Result<()>> {
+                    Poll::Ready(Ok(()))
+                }
+            }
+
+            let written = Arc::default();
+            let connector = test_connector();
+            let mut future =
+                pin!(connector.connect_async("example.com", SilentPeer(Arc::clone(&written))));
+            let mut cx = Context::from_waker(Waker::noop());
+            assert!(future.as_mut().poll(&mut cx).is_pending());
+            // The ClientHello went out.
+            assert!(written.load(Ordering::Relaxed) > 0);
+        }
+
+        #[test]
+        #[cfg(feature = "webpki-root-certs")]
+        fn webpki_root_certs_connector_builds() {
+            RustlsConnector::new_with_webpki_root_certs().unwrap();
+        }
+
+        #[test]
+        #[cfg(feature = "platform-verifier")]
+        fn platform_verifier_connector_builds() {
+            RustlsConnector::new_with_platform_verifier().unwrap();
+        }
+
+        #[test]
+        #[cfg(feature = "webpki-root-certs")]
+        fn invalid_certificates_are_skipped() {
+            let mut certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02])];
+            certs.extend(webpki_root_certs::TLS_SERVER_ROOT_CERTS.iter().cloned());
+            RustlsConnectorConfig::default()
+                .with_parsable_certificates(certs)
+                .connector_with_no_client_auth()
+                .unwrap();
+        }
+
+        #[test]
+        #[cfg(feature = "platform-verifier")]
+        fn platform_verifier_rejects_invalid_extra_roots() {
+            let err = RustlsConnectorConfig::new_with_platform_verifier()
+                .with_parsable_certificates(vec![CertificateDer::from(vec![0x00, 0x01, 0x02])])
+                .connector_with_no_client_auth()
+                .unwrap_err();
+            assert_eq!(
+                err.kind(),
+                io::ErrorKind::InvalidData,
+                "unexpected error: {err}"
+            );
+        }
     }
 }
