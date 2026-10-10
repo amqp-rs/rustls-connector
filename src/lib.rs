@@ -407,27 +407,24 @@ impl RustlsConnector {
         RustlsConnectorConfig::new_with_native_certs()?.connector_with_no_client_auth()
     }
 
-    /// Connect to the given host
+    /// Connect to the given host, over a stream that does not need to be `Send`
     ///
     /// # Errors
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the handshake
-    // FIXME: The `Send + 'static` bounds here, in `connect_async`, and on
-    // `HandshakeError<S>` exclude borrowed and non-`Send` streams. Removing the
-    // public `'static` bound can break downstream code that relies on its implied
-    // lifetime constraint, so supporting those streams needs a compatible API.
+    // FIXME: The `'static` bounds here and on `MidHandshakeTlsStream::handshake` exclude borrowed
+    // streams. Lifting them is a breaking change: downstream code may rely on the `'static` bound
+    // of `HandshakeError<S>` as an implied bound. `connect_async` also requires `Send + 'static`
+    // streams without needing either.
     #[allow(clippy::result_large_err)]
-    pub fn connect<S: Read + Write + Send + 'static>(
+    pub fn connect<S: Read + Write + 'static>(
         &self,
         domain: &str,
         stream: S,
     ) -> Result<TlsStream<S>, HandshakeError<S>> {
-        let session = ClientConnection::new(
-            self.0.clone(),
-            server_name(domain).map_err(HandshakeError::Failure)?,
-        )
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+        let session = ClientConnection::new(self.0.clone(), server_name(domain)?)
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
         MidHandshakeTlsStream {
             session,
             stream,
@@ -466,14 +463,15 @@ fn server_name(domain: &str) -> io::Result<ServerName<'static>> {
 
 /// A TLS stream which has been interrupted during the handshake
 #[derive(Debug)]
-pub struct MidHandshakeTlsStream<S: Read + Write> {
+pub struct MidHandshakeTlsStream<S> {
     session: ClientConnection,
     stream: S,
     write_blocked: bool,
 }
 
-impl<S: Read + Write> MidHandshakeTlsStream<S> {
+impl<S> MidHandshakeTlsStream<S> {
     /// Get a reference to the inner stream
+    #[must_use]
     pub fn get_ref(&self) -> &S {
         &self.stream
     }
@@ -501,7 +499,7 @@ impl<S: Read + Write> MidHandshakeTlsStream<S> {
     }
 }
 
-impl<S: Read + Write + Send + 'static> MidHandshakeTlsStream<S> {
+impl<S: Read + Write + 'static> MidHandshakeTlsStream<S> {
     /// Retry the handshake
     ///
     /// # Errors
@@ -619,7 +617,7 @@ impl<S: Write> Write for HandshakeIo<'_, S> {
     }
 }
 
-impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
+impl<S> fmt::Display for MidHandshakeTlsStream<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("MidHandshakeTlsStream")
     }
@@ -627,7 +625,9 @@ impl<S: Read + Write> fmt::Display for MidHandshakeTlsStream<S> {
 
 /// An error returned while performing the handshake
 #[allow(clippy::large_enum_variant)]
-pub enum HandshakeError<S: Read + Write + Send + 'static> {
+// The definition does not need the `'static` bound, but downstream signatures may rely on it as an
+// implied bound, so removing it would be a breaking change.
+pub enum HandshakeError<S: 'static> {
     /// The inner stream is not ready: it returned `WouldBlock`, or `NotConnected` while a
     /// non-blocking connect is in progress. The handshake state is preserved so it can be retried
     /// once [`MidHandshakeTlsStream::wants_write`] tells which readiness to wait for.
@@ -637,7 +637,7 @@ pub enum HandshakeError<S: Read + Write + Send + 'static> {
     Failure(io::Error),
 }
 
-impl<S: Read + Write + Send + 'static> fmt::Display for HandshakeError<S> {
+impl<S: 'static> fmt::Display for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             HandshakeError::WouldBlock(_) => f.write_str("Handshake needs another I/O attempt"),
@@ -646,7 +646,7 @@ impl<S: Read + Write + Send + 'static> fmt::Display for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Write + Send + 'static> fmt::Debug for HandshakeError<S> {
+impl<S: 'static> fmt::Debug for HandshakeError<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut d = f.debug_tuple("HandshakeError");
         match self {
@@ -657,7 +657,7 @@ impl<S: Read + Write + Send + 'static> fmt::Debug for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Write + Send + 'static> Error for HandshakeError<S> {
+impl<S: 'static> Error for HandshakeError<S> {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             HandshakeError::Failure(err) => Some(err),
@@ -666,7 +666,7 @@ impl<S: Read + Write + Send + 'static> Error for HandshakeError<S> {
     }
 }
 
-impl<S: Read + Send + Write + 'static> From<io::Error> for HandshakeError<S> {
+impl<S: 'static> From<io::Error> for HandshakeError<S> {
     fn from(err: io::Error) -> Self {
         HandshakeError::Failure(err)
     }
@@ -811,7 +811,7 @@ mod tests {
             }
         }
 
-        fn expect_would_block<S: Read + Write + Send + 'static>(
+        fn expect_would_block<S: Read + Write + 'static>(
             result: Result<TlsStream<S>, HandshakeError<S>>,
         ) -> MidHandshakeTlsStream<S> {
             match result {
@@ -821,7 +821,7 @@ mod tests {
             }
         }
 
-        fn expect_failure<S: Read + Write + Send + 'static>(
+        fn expect_failure<S: Read + Write + 'static>(
             result: Result<TlsStream<S>, HandshakeError<S>>,
         ) -> io::Error {
             match result {
@@ -878,6 +878,16 @@ mod tests {
             let mid = expect_would_block(mid.handshake());
             assert!(!mid.wants_write());
             assert!(mid.wants_read());
+        }
+
+        #[test]
+        fn sync_connect_accepts_non_send_stream() {
+            trait LocalIo: Read + Write {}
+            impl<T: Read + Write> LocalIo for T {}
+
+            let io: Box<dyn LocalIo> = Box::new(ScriptedIo::default());
+            let mid = expect_would_block(test_connector().connect("example.com", io));
+            expect_would_block(mid.handshake());
         }
 
         #[test]
