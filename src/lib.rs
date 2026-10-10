@@ -182,6 +182,34 @@ pub struct RustlsConnectorConfig {
     platform_verifier: bool,
 }
 
+/// The certificates rustls-native-certs loaded from the OS store, or an error if there are none:
+/// see [`RustlsConnectorConfig::with_native_certs`].
+#[cfg(feature = "native-certs")]
+fn native_certs(
+    result: rustls_native_certs::CertificateResult,
+) -> io::Result<Vec<CertificateDer<'static>>> {
+    let mut errors = result.errors.into_iter();
+    if result.certs.is_empty() {
+        let Some(err) = errors.next() else {
+            return Err(io::Error::other(
+                "Could not load any valid native certificates",
+            ));
+        };
+        for err in errors {
+            log::warn!("Got error while loading native certificates: {err}");
+        }
+        let kind = match &err.kind {
+            rustls_native_certs::ErrorKind::Io { inner, .. } => inner.kind(),
+            _ => io::ErrorKind::Other,
+        };
+        return Err(io::Error::new(kind, err));
+    }
+    for err in errors {
+        log::warn!("Got error while loading some native certificates: {err}");
+    }
+    Ok(result.certs)
+}
+
 /// Whether the platform verifier loads the native certificates itself, with rustls-native-certs.
 #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
 const PLATFORM_VERIFIER_LOADS_NATIVE_CERTS: bool = cfg!(all(
@@ -263,7 +291,7 @@ impl RustlsConnectorConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if we fail to load the native certs.
+    /// See [`with_native_certs`](Self::with_native_certs).
     pub fn new_with_native_certs() -> io::Result<Self> {
         Self::default().with_native_certs()
     }
@@ -334,22 +362,16 @@ impl RustlsConnectorConfig {
     ///
     /// # Errors
     ///
-    /// Returns an error if we fail to load the native certs.
+    /// Returns an error if the OS certificate store yielded no certificate. If it could not be
+    /// read, the error carries the underlying error, and its kind when that is an I/O error.
+    /// Certificates that fail to load individually are logged and skipped.
     pub fn with_native_certs(mut self) -> io::Result<Self> {
         #[cfg(feature = "platform-verifier")]
         {
             self.native_certs_needed |= platform_verifier_needs_native_certs();
         }
-        let certs_result = rustls_native_certs::load_native_certs();
-        for err in certs_result.errors {
-            log::warn!("Got error while loading some native certificates: {err:?}");
-        }
-        if certs_result.certs.is_empty() {
-            return Err(io::Error::other(
-                "Could not load any valid native certificates",
-            ));
-        }
-        self.native_certs.extend(certs_result.certs);
+        self.native_certs
+            .extend(native_certs(rustls_native_certs::load_native_certs())?);
         Ok(self)
     }
 
@@ -854,6 +876,29 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "native-certs")]
+    fn empty_native_store_is_an_error() {
+        let err = native_certs(rustls_native_certs::CertificateResult::default()).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+    }
+
+    #[test]
+    #[cfg(feature = "native-certs")]
+    fn unreadable_native_store_keeps_its_error() {
+        let mut result = rustls_native_certs::CertificateResult::default();
+        result.errors.push(rustls_native_certs::Error {
+            context: "test",
+            kind: rustls_native_certs::ErrorKind::Io {
+                inner: io::ErrorKind::NotFound.into(),
+                path: "no/such/file".into(),
+            },
+        });
+        let err = native_certs(result).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(err.get_ref().unwrap().is::<rustls_native_certs::Error>());
+    }
+
+    #[test]
     #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
     fn native_certs_are_needed_where_redirected_or_untrusted() {
         let file = Some(std::ffi::OsStr::new("ca.pem"));
@@ -1325,6 +1370,22 @@ mod tests {
         #[cfg(feature = "webpki-root-certs")]
         fn webpki_root_certs_connector_builds() {
             RustlsConnector::new_with_webpki_root_certs().unwrap();
+        }
+
+        /// Whether the OS certificate store is empty, as in some package build environments,
+        /// where the tests that need it skip.
+        #[cfg(feature = "native-certs")]
+        fn os_store_is_empty() -> bool {
+            rustls_native_certs::load_native_certs().certs.is_empty()
+        }
+
+        #[test]
+        #[cfg(feature = "native-certs")]
+        fn native_certs_connector_builds() {
+            if os_store_is_empty() {
+                return;
+            }
+            RustlsConnector::new_with_native_certs().unwrap();
         }
 
         #[test]
