@@ -171,8 +171,76 @@ pub type AsyncTlsStream<S> = futures_rustls::client::TlsStream<S>;
 #[derive(Clone, Default, Debug)]
 pub struct RustlsConnectorConfig {
     store: Vec<CertificateDer<'static>>,
+    // Kept apart from `store`: the platform verifier only needs them in some cases.
+    #[cfg(feature = "native-certs")]
+    native_certs: Vec<CertificateDer<'static>>,
+    // Whether the platform verifier needs `native_certs`, decided from the environment they were
+    // loaded with.
+    #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+    native_certs_needed: bool,
     #[cfg(feature = "platform-verifier")]
     platform_verifier: bool,
+}
+
+/// Whether the platform verifier loads the native certificates itself, with rustls-native-certs.
+#[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+const PLATFORM_VERIFIER_LOADS_NATIVE_CERTS: bool = cfg!(all(
+    unix,
+    not(target_os = "android"),
+    not(target_vendor = "apple"),
+    not(target_arch = "wasm32"),
+));
+
+/// Whether the platform verifier trusts the OS certificate store: on wasm32, it only trusts the
+/// webpki roots.
+#[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+const PLATFORM_VERIFIER_TRUSTS_OS_STORE: bool = cfg!(not(target_arch = "wasm32"));
+
+/// Whether the platform verifier needs the native certificates as extra roots.
+#[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+fn platform_verifier_needs_native_certs() -> bool {
+    needs_native_certs(
+        PLATFORM_VERIFIER_LOADS_NATIVE_CERTS,
+        PLATFORM_VERIFIER_TRUSTS_OS_STORE,
+        std::env::var_os("SSL_CERT_FILE").as_deref(),
+        std::env::var_os("SSL_CERT_DIR").as_deref(),
+    )
+}
+
+/// Whether a platform verifier needs the native certificates, given whether it loads them itself,
+/// whether it trusts the OS certificate store, and the values of `SSL_CERT_FILE` and
+/// `SSL_CERT_DIR`, without which rustls-native-certs loads them from the OS store.
+#[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+fn needs_native_certs(
+    loads_them_itself: bool,
+    trusts_os_store: bool,
+    cert_file: Option<&std::ffi::OsStr>,
+    cert_dirs: Option<&std::ffi::OsStr>,
+) -> bool {
+    // rustls-native-certs skips empty `SSL_CERT_DIR` entries.
+    let elsewhere = cert_file.is_some()
+        || cert_dirs
+            .is_some_and(|dirs| std::env::split_paths(dirs).any(|dir| !dir.as_os_str().is_empty()));
+    !loads_them_itself && (!trusts_os_store || elsewhere)
+}
+
+/// The native certificates that webpki can parse, skipping the others as the platform verifier
+/// does with the OS store where it loads it itself. Where this is used, the platform verifier
+/// still parses the remaining ones, with the OS's own parser on Apple platforms and Windows and
+/// with webpki on wasm32; on Android, `builder()` refuses them.
+#[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+fn parsable_native_certs(mut certs: Vec<CertificateDer<'static>>) -> Vec<CertificateDer<'static>> {
+    let len = certs.len();
+    certs.retain(|cert| webpki::anchor_from_trusted_cert(cert).is_ok());
+    warn_ignored_roots(len - certs.len(), "native");
+    certs
+}
+
+/// Log how many root certificates from the given origin could not be parsed.
+fn warn_ignored_roots(ignored: usize, origin: &str) {
+    if ignored > 0 {
+        log::warn!("{ignored} {origin} root certificates were ignored due to errors");
+    }
 }
 
 impl RustlsConnectorConfig {
@@ -206,9 +274,10 @@ impl RustlsConnectorConfig {
     /// skipped in a best-effort fashion, because large collections of root certificates often
     /// include ancient or syntactically invalid certificates.
     ///
-    /// The one exception is [`with_platform_verifier`](Self::with_platform_verifier): the platform
-    /// verifier rejects unparsable extra roots outright, so a single bad certificate makes
-    /// building the connector fail.
+    /// The exception is the platform verifier (`with_platform_verifier`, with the
+    /// `platform-verifier` feature): it rejects unparsable extra roots outright, so a single bad
+    /// certificate makes building the connector fail. On Android, it cannot use extra roots at
+    /// all, so building the connector fails if any were added.
     pub fn add_parsable_certificates(&mut self, mut der_certs: Vec<CertificateDer<'static>>) {
         self.store.append(&mut der_certs)
     }
@@ -233,6 +302,22 @@ impl RustlsConnectorConfig {
 
     #[cfg(feature = "platform-verifier")]
     /// Use the rustls-platform-verifier mechanism (requires platform-verifier feature enabled)
+    ///
+    /// Except on wasm32, where it only trusts the webpki roots, the platform verifier trusts the OS
+    /// certificate store, so roots from `with_native_certs` are only passed to it, skipping those
+    /// that fail to parse, when `SSL_CERT_FILE` or `SSL_CERT_DIR` pointed rustls-native-certs
+    /// elsewhere during a call to it (and then all of them are), and not even then on Unix systems
+    /// other than Apple platforms and Android, such as Linux and the BSDs, where it loads them
+    /// itself. On wasm32, they are always passed to it. Other roots are passed to it as extra
+    /// roots: see [`add_parsable_certificates`](Self::add_parsable_certificates) for how it
+    /// handles them.
+    ///
+    /// On Android, the platform verifier cannot take any roots besides the platform's, so building
+    /// the connector fails if it would pass it some: extra roots, the webpki roots, or roots from
+    /// `with_native_certs` when `SSL_CERT_FILE` or `SSL_CERT_DIR` pointed rustls-native-certs
+    /// elsewhere. rustls-platform-verifier must also be initialized from Java first (see
+    /// [`rustls_platform_verifier::android`](https://docs.rs/rustls-platform-verifier/0.7/rustls_platform_verifier/android/index.html));
+    /// otherwise the first handshake panics.
     #[must_use]
     pub fn with_platform_verifier(mut self) -> Self {
         self.platform_verifier = true;
@@ -242,10 +327,19 @@ impl RustlsConnectorConfig {
     #[cfg(feature = "native-certs")]
     /// Add the system certs (requires native-certs feature enabled)
     ///
+    /// With the platform verifier, they are only used in some cases, as it trusts the OS
+    /// certificate store itself except on wasm32 (see `with_platform_verifier`). Whether
+    /// `SSL_CERT_FILE` or `SSL_CERT_DIR` point rustls-native-certs elsewhere is checked here, as
+    /// the certificates are loaded.
+    ///
     /// # Errors
     ///
     /// Returns an error if we fail to load the native certs.
     pub fn with_native_certs(mut self) -> io::Result<Self> {
+        #[cfg(feature = "platform-verifier")]
+        {
+            self.native_certs_needed |= platform_verifier_needs_native_certs();
+        }
         let certs_result = rustls_native_certs::load_native_certs();
         for err in certs_result.errors {
             log::warn!("Got error while loading some native certificates: {err:?}");
@@ -255,7 +349,7 @@ impl RustlsConnectorConfig {
                 "Could not load any valid native certificates",
             ));
         }
-        self.add_parsable_certificates(certs_result.certs);
+        self.native_certs.extend(certs_result.certs);
         Ok(self)
     }
 
@@ -267,21 +361,30 @@ impl RustlsConnectorConfig {
         {
             if self.platform_verifier {
                 let provider = builder.crypto_provider().clone();
-                // `rustls-platform-verifier` has no `new_with_extra_roots` on Android: its trust
-                // decisions are delegated to the platform and cannot be augmented from Rust.
-                // Refuse rather than silently trusting fewer roots than the caller asked for.
-                #[cfg(target_os = "android")]
-                let verifier = {
-                    if !self.store.is_empty() {
-                        return Err(io::Error::other(
-                            "extra root certificates cannot be combined with the platform verifier on Android",
-                        ));
-                    }
+                // Unlike native certificates, these are not pre-filtered: the caller asked for each
+                // of them, so one the verifier cannot parse fails the build rather than being
+                // dropped, and webpki would also drop some that the platform's own parser, used on
+                // Apple platforms and Windows, accepts.
+                #[allow(unused_mut)]
+                let mut extra_roots = self.store;
+                #[cfg(feature = "native-certs")]
+                if self.native_certs_needed {
+                    extra_roots.extend(parsable_native_certs(self.native_certs));
+                }
+                let verifier = if extra_roots.is_empty() {
                     rustls_platform_verifier::Verifier::new(provider)
+                } else {
+                    // `rustls-platform-verifier` has no `new_with_extra_roots` on Android: its
+                    // trust decisions are delegated to the platform and cannot be augmented from
+                    // Rust. Refuse rather than silently trusting fewer roots than the caller asked
+                    // for.
+                    #[cfg(target_os = "android")]
+                    return Err(io::Error::other(
+                        "extra root certificates cannot be combined with the platform verifier on Android",
+                    ));
+                    #[cfg(not(target_os = "android"))]
+                    rustls_platform_verifier::Verifier::new_with_extra_roots(extra_roots, provider)
                 };
-                #[cfg(not(target_os = "android"))]
-                let verifier =
-                    rustls_platform_verifier::Verifier::new_with_extra_roots(self.store, provider);
                 let verifier =
                     verifier.map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
                 // `.dangerous()` is the rustls API for supplying a custom verifier;
@@ -292,10 +395,11 @@ impl RustlsConnectorConfig {
             }
         }
         let mut store = RootCertStore::empty();
-        let (_, ignored) = store.add_parsable_certificates(self.store);
-        if ignored > 0 {
-            log::warn!("{ignored} CA root certificates were ignored due to errors");
-        }
+        let roots = self.store.into_iter();
+        #[cfg(feature = "native-certs")]
+        let roots = roots.chain(self.native_certs);
+        let (_, ignored) = store.add_parsable_certificates(roots);
+        warn_ignored_roots(ignored, "CA");
         if store.is_empty() {
             return Err(io::Error::other("Could not load any valid certificates"));
         }
@@ -420,6 +524,11 @@ impl RustlsConnector {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the handshake
+    ///
+    /// # Panics
+    ///
+    /// On Android, panics when using the platform verifier before rustls-platform-verifier was
+    /// initialized (see `RustlsConnectorConfig::with_platform_verifier`).
     // FIXME: The `'static` bounds here and on `MidHandshakeTlsStream::handshake` exclude borrowed
     // streams. Lifting them is a breaking change: downstream code may rely on the `'static` bound
     // of `HandshakeError<S>` as an implied bound.
@@ -460,6 +569,10 @@ impl RustlsConnector {
     /// The future resolves to an [`io::Error`] containing the failure when we couldn't complete
     /// the TLS handshake. TLS errors have kind [`InvalidData`](io::ErrorKind::InvalidData), as
     /// with [`connect`](Self::connect).
+    ///
+    /// # Panics
+    ///
+    /// The future panics in the same case as [`connect`](Self::connect).
     pub fn connect_async<S: AsyncRead + AsyncWrite + Unpin>(
         &self,
         domain: &str,
@@ -544,6 +657,11 @@ impl<S: Read + Write + 'static> MidHandshakeTlsStream<S> {
     ///
     /// Returns a [`HandshakeError`] containing either the current state of the handshake or the
     /// failure when we couldn't complete the handshake
+    ///
+    /// # Panics
+    ///
+    /// See [`RustlsConnector::connect`]: on a non-blocking stream, the server certificate is
+    /// verified by a later call to this method.
     #[allow(clippy::result_large_err)]
     pub fn handshake(mut self) -> Result<TlsStream<S>, HandshakeError<S>> {
         let mut io = HandshakeIo {
@@ -733,6 +851,47 @@ mod tests {
         assert_eq!(err.to_string(), "TLS handshake failed");
         assert!(format!("{err:?}").contains("test error"));
         assert_eq!(err.source().unwrap().to_string(), "test error");
+    }
+
+    #[test]
+    #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+    fn native_certs_are_needed_where_redirected_or_untrusted() {
+        let file = Some(std::ffi::OsStr::new("ca.pem"));
+        let dirs = Some(std::ffi::OsStr::new("certs"));
+        let empty_dirs = std::env::join_paths(["", ""]).unwrap();
+        assert!(!needs_native_certs(false, true, None, None));
+        assert!(needs_native_certs(false, true, file, None));
+        assert!(needs_native_certs(false, true, None, dirs));
+        assert!(!needs_native_certs(false, true, None, Some(&empty_dirs)));
+        assert!(!needs_native_certs(true, true, file, dirs));
+        assert!(needs_native_certs(false, false, None, None));
+    }
+
+    // Tests set the native-certificates decision directly, so pin the constants it is made of on
+    // known targets (an item, so that `cargo check --tests` evaluates it).
+    #[cfg(all(
+        feature = "platform-verifier",
+        feature = "native-certs",
+        not(target_arch = "wasm32")
+    ))]
+    const _: () = {
+        assert!(PLATFORM_VERIFIER_TRUSTS_OS_STORE);
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        assert!(PLATFORM_VERIFIER_LOADS_NATIVE_CERTS);
+        #[cfg(any(windows, target_vendor = "apple", target_os = "android"))]
+        assert!(!PLATFORM_VERIFIER_LOADS_NATIVE_CERTS);
+    };
+
+    #[test]
+    #[cfg(all(
+        feature = "platform-verifier",
+        feature = "native-certs",
+        feature = "webpki-root-certs"
+    ))]
+    fn unparsable_native_certs_are_skipped() {
+        let valid = webpki_root_certs::TLS_SERVER_ROOT_CERTS[0].clone();
+        let invalid = CertificateDer::from(vec![0x00, 0x01, 0x02]);
+        assert_eq!(parsable_native_certs(vec![invalid, valid.clone()]), [valid]);
     }
 
     // Everything below needs a crypto provider to build a connector, or shares the scripted
@@ -1186,6 +1345,16 @@ mod tests {
         }
 
         #[test]
+        #[cfg(all(feature = "platform-verifier", feature = "native-certs"))]
+        fn platform_verifier_tolerates_invalid_native_certs() {
+            // Pre-filtered where it needs them, as it would parse them strictly.
+            let mut config = RustlsConnectorConfig::new_with_platform_verifier();
+            config.native_certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02])];
+            config.native_certs_needed = true;
+            config.connector_with_no_client_auth().unwrap();
+        }
+
+        #[test]
         #[cfg(feature = "platform-verifier")]
         fn platform_verifier_rejects_invalid_extra_roots() {
             let err = RustlsConnectorConfig::new_with_platform_verifier()
@@ -1197,6 +1366,8 @@ mod tests {
                 io::ErrorKind::InvalidData,
                 "unexpected error: {err}"
             );
+            // Callers may downcast to the rustls error.
+            assert!(err.get_ref().unwrap().is::<rustls::Error>(), "{err:?}");
         }
     }
 }

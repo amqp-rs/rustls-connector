@@ -45,7 +45,7 @@ default-features = false
 features         = ["std", "tls12"]
 
 [dependencies.rustls-native-certs]
-version  = "^0.8"
+version  = "^0.8.4"
 optional = true
 
 [dependencies.rustls-platform-verifier]

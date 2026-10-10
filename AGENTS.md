@@ -33,7 +33,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 - `futures` — enables async support via `futures-rustls` and `futures-io`
 - `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection, made by `crypto_provider()` and documented in the crate docs' feature flags section (`rustls--aws_lc_rs` also enables rustls's `prefer-post-quantum`, a rustls default that this crate otherwise loses by disabling rustls's default features)
 
-`platform-verifier` and `webpki-root-certs`/`native-certs` can be combined: extra roots from the latter are passed to the platform verifier via `new_with_extra_roots`.
+`platform-verifier` can be combined with `webpki-root-certs` and explicitly added roots, which are passed to the platform verifier via `new_with_extra_roots` (plain `Verifier::new` when there are none). Native certs are kept in a separate field and only passed to it in some cases: `with_native_certs()` records that decision in `native_certs_needed` (`platform_verifier_needs_native_certs()` around the pure `needs_native_certs()`), and `with_platform_verifier` documents the rules, the Android refusal of extra roots and the JNI initialization Android needs.
 
 Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt through `HandshakeIo` (which retries `Interrupted` writes and flushes in place, records blocked writes, and fails zero-length ones with `WriteZero`), and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending, or when the stream reports `WouldBlock` or `NotConnected`. `MidHandshakeTlsStream::wants_write()`/`wants_read()` tell callers which readiness to wait for.
 

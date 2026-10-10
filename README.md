@@ -25,6 +25,12 @@ feature.
 | `native-certs` | Native root certificates via rustls-native-certs |
 | `webpki-root-certs` | Bundled Mozilla root certificate set |
 
+On Android, the platform verifier must be initialized from Java before the
+first connection (see the rustls-platform-verifier documentation), and it
+cannot take any roots besides the platform's: extra root certificates, the
+webpki roots, or native certificates while `SSL_CERT_FILE` or `SSL_CERT_DIR`
+is set.
+
 ### Rustls crypto provider (one is used, see below)
 
 | Flag | Notes |
