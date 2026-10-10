@@ -144,6 +144,21 @@ fn crypto_provider() -> io::Result<Arc<CryptoProvider>> {
 }
 
 /// A rustls client TLS stream wrapping an underlying synchronous I/O stream `S`.
+///
+/// This is rustls's [`StreamOwned`], whose `write` hands the data over to `S` but ignores errors
+/// while doing so, including a `WouldBlock` from flushing `S`. If `S` buffers writes (a buffered
+/// wrapper around a non-blocking socket, for instance), call `flush`, which also flushes `S`,
+/// until that succeeds.
+///
+/// Its `write` returns `Ok(0)` when rustls's buffer is full and `S` blocks while data from the
+/// peer, or the end of its stream, is waiting: treat that as a `WouldBlock`, which `write_all`
+/// does not. If `conn.wants_write()` is false, sending the buffer emptied it after rustls refused
+/// the data: write again, `Ok(0)` then meaning a zero buffer limit. Over an `S` that accepts no
+/// bytes, `write` keeps buffering until rustls's buffer is full and then returns `Ok(0)`, while
+/// `flush` fails with `WriteZero` right away.
+///
+/// While sending pending data fails with an error other than `WouldBlock`, its `read` fails with
+/// that error too, even with data from the peer waiting at `S`.
 pub type TlsStream<S> = StreamOwned<ClientConnection, S>;
 
 #[cfg(feature = "futures")]
