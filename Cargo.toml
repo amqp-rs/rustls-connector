@@ -12,9 +12,6 @@ categories = ["asynchronous", "cryptography", "network-programming"]
 license = "BSD-2-Clause"
 rust-version = "1.85.0"
 
-[lib]
-name = "rustls_connector"
-
 [features]
 default           = ["platform-verifier", "rustls--aws_lc_rs" ]
 futures           = ["dep:futures-io", "dep:futures-rustls"]
@@ -50,11 +47,6 @@ features         = ["std", "tls12"]
 [dependencies.rustls-native-certs]
 version  = "^0.8"
 optional = true
-
-[dependencies.rustls-pki-types]
-version          = "^1.4"
-default-features = false
-features         = ["std"]
 
 [dependencies.rustls-platform-verifier]
 version  = "^0.7"

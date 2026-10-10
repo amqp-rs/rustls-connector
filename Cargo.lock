@@ -314,7 +314,6 @@ dependencies = [
  "log",
  "rustls",
  "rustls-native-certs",
- "rustls-pki-types",
  "rustls-platform-verifier",
  "rustls-webpki",
  "webpki-root-certs",

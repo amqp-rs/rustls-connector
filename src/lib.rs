@@ -67,11 +67,11 @@
 
 /// Reexport of the [`rustls`](https://docs.rs/rustls) crate.
 pub use rustls;
+/// Reexport of the [`rustls_pki_types`](https://docs.rs/rustls-pki-types) crate.
+pub use rustls::pki_types as rustls_pki_types;
 #[cfg(feature = "native-certs")]
 /// Reexport of the [`rustls_native_certs`](https://docs.rs/rustls-native-certs) crate.
 pub use rustls_native_certs;
-/// Reexport of the [`rustls_pki_types`](https://docs.rs/rustls-pki-types) crate.
-pub use rustls_pki_types;
 #[cfg(feature = "platform-verifier")]
 /// Reexport of the [`rustls_platform_verifier`](https://docs.rs/rustls-platform-verifier) crate.
 pub use rustls_platform_verifier;
@@ -85,9 +85,10 @@ pub use webpki_root_certs;
 use futures_io::{AsyncRead, AsyncWrite};
 use rustls::{
     ClientConfig, ClientConnection, ConfigBuilder, RootCertStore, StreamOwned,
-    client::WantsClientCert, crypto::CryptoProvider,
+    client::WantsClientCert,
+    crypto::CryptoProvider,
+    pki_types::{CertificateDer, PrivateKeyDer, ServerName},
 };
-use rustls_pki_types::{CertificateDer, PrivateKeyDer, ServerName};
 
 use std::{
     error::Error,
