@@ -10,10 +10,11 @@
 
 </div>
 
-Wraps `rustls` with a high-level `RustlsConnector` type that mirrors the
-ergonomics of `native_tls::TlsConnector`, making it straightforward to swap
-TLS backends in existing code. An async variant is available via the `futures`
-feature.
+rustls-connector gives rustls the connector API of the `openssl` and
+`native-tls` crates: build a `RustlsConnector` from a choice of root
+certificates, call `connect` on a stream such as a `TcpStream`, and retry the
+handshake on non-blocking streams the same way. It is the rustls backend of
+`tcp-stream`, and the `futures` feature adds an async `connect_async`.
 
 Both connection methods accept borrowed I/O streams and streams that do not
 implement `Send`; async streams must also implement `Unpin`.
@@ -28,17 +29,28 @@ implement `Send`; async streams must also implement `Unpin`.
 | `native-certs` | Native root certificates via rustls-native-certs |
 | `webpki-root-certs` | Bundled Mozilla root certificate set |
 
-### Rustls crypto provider (at least one required)
+On Android, the platform verifier must be initialized from Java before the
+first connection (see the rustls-platform-verifier documentation), and it
+cannot take any roots besides the platform's: extra root certificates, the
+webpki roots, or native certificates while `SSL_CERT_FILE` or `SSL_CERT_DIR`
+is set.
+
+### Rustls crypto provider (one is used, see below)
 
 | Flag | Notes |
 |------|-------|
-| `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs |
-| `rustls--ring` | Uses ring (more portable, e.g. builds on Windows) |
+| `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
+| `rustls--ring` | Uses ring (more portable) |
 
-An installed process-level rustls crypto provider takes precedence. If both
-provider features are enabled, the connector uses aws-lc-rs unless a
-process-level default has been installed. If neither is enabled, connector
-construction returns an error.
+Connectors use the process-level rustls crypto provider when one is installed.
+Otherwise they pick aws-lc-rs, or ring if only `rustls--ring` is enabled, and
+install it as the process-level default when the first connector is built, so
+install a provider early in `main` if other rustls users may start before
+that. With neither feature, the choice is left to rustls's own crate features:
+rustls installs the provider it picks as the default too, and building a
+connector panics if it cannot pick one. Applications using a custom rustls
+provider should disable this crate's provider features and install their
+provider before building any connector.
 
 To use ring without compiling aws-lc-rs, disable default features and select
 a certificate store explicitly:
@@ -56,7 +68,7 @@ rustls-connector = { version = "0.23", default-features = false, features = ["pl
 
 ## Example
 
-To connect to a remote server:
+To connect to several servers, build the connector once and reuse it:
 
 ```rust
 use rustls_connector::RustlsConnector;
@@ -66,12 +78,17 @@ use std::{
     net::TcpStream,
 };
 
+// Build it once: reusing it lets rustls resume TLS sessions, and on most Unix
+// systems, building it loads the OS trust store.
 let connector = RustlsConnector::new_with_platform_verifier().unwrap();
-let stream = TcpStream::connect("google.com:443").unwrap();
-let mut stream = connector.connect("google.com", stream).unwrap();
 
-stream.write_all(b"GET / HTTP/1.0\r\n\r\n").unwrap();
-let mut res = vec![];
-stream.read_to_end(&mut res).unwrap();
-println!("{}", String::from_utf8_lossy(&res));
+for host in ["rust-lang.org", "crates.io"] {
+    let stream = TcpStream::connect((host, 443)).unwrap();
+    let mut stream = connector.connect(host, stream).unwrap();
+    let request = format!("GET / HTTP/1.0\r\nHost: {host}\r\n\r\n");
+    stream.write_all(request.as_bytes()).unwrap();
+    let mut res = vec![];
+    stream.read_to_end(&mut res).unwrap();
+    println!("{host}: {} bytes", res.len());
+}
 ```

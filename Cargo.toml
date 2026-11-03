@@ -1,6 +1,6 @@
 [package]
 name = "rustls-connector"
-version = "0.23.9"
+version = "0.23.10"
 edition = "2024"
 authors = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 description = "Connector similar to openssl or native-tls for rustls"
@@ -10,10 +10,7 @@ documentation = "https://docs.rs/rustls-connector"
 keywords = ["tls", "rustls", "ssl", "connector", "crypto"]
 categories = ["asynchronous", "cryptography", "network-programming"]
 license = "BSD-2-Clause"
-rust-version = "1.87.0"
-
-[lib]
-name = "rustls_connector"
+rust-version = "1.85.0"
 
 [features]
 default           = ["platform-verifier", "rustls--aws_lc_rs" ]
@@ -24,9 +21,9 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 native-certs      = ["dep:rustls-native-certs"]
 webpki-root-certs = ["dep:webpki-root-certs"]
 
-# rustls crypto providers. Choose at least one. Otherwise, runtime errors.
+# rustls crypto providers. Without either, rustls picks one from its own features, if it can.
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
-rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs"] # default, but doesn't build everywhere
+rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs", "rustls/prefer-post-quantum"] # default, but doesn't build everywhere
 rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)
 
 [dependencies]
@@ -43,30 +40,25 @@ default-features = false
 features         = ["tls12"]
 
 [dependencies.rustls]
-version          = "^0.23.45"
+version          = "^0.23.46"
 default-features = false
 features         = ["std", "tls12"]
 
 [dependencies.rustls-native-certs]
-version  = "^0.8"
+version  = "^0.8.4"
 optional = true
-
-[dependencies.rustls-pki-types]
-version          = "^1.4"
-default-features = false
-features         = ["std"]
 
 [dependencies.rustls-platform-verifier]
 version  = "^0.7"
 optional = true
 
 [dependencies.rustls-webpki]
-version          = "^0.103.13"
+version          = "^0.103.16"
 default-features = false
 features         = ["std"]
 
 [dependencies.webpki-root-certs]
-version  = "^1.0"
+version  = "^1.0.10"
 optional = true
 
 [package.metadata.docs.rs]

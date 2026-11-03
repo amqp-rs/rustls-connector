@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - rustls-connector-0.23.x
     tags:
       - "**"
   pull_request:
@@ -23,6 +24,13 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable]
         include:
+          # The ring and provider-less feature sets test nothing that depends on the OS or the
+          # toolchain.
+          - os: ubuntu-latest
+            rust: stable
+            portable-test-features: |
+              webpki-root-certs,futures,rustls--ring
+              platform-verifier,native-certs,webpki-root-certs
           - os: ubuntu-latest
             rust: nightly
           - os: ubuntu-latest
@@ -35,3 +43,25 @@ jobs:
       - uses: amqp-rs/actions/build@main
         with:
           rust: ${{ matrix.rust }}
+          # The default run only covers default features; these cover the tests gated on the
+          # other features, the ring provider, and the build without a provider feature.
+          test-features: |
+            platform-verifier,native-certs,webpki-root-certs,futures,logging,rustls--aws_lc_rs,rustls--ring
+            ${{ matrix.portable-test-features }}
+
+  # The Android-only code paths are not built by any job above, nor the compile-time pins of the
+  # platform-verifier constants in the tests. Without a crypto provider feature, this needs no
+  # cross C toolchain.
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: amqp-rs/actions/checkout@main
+      # Only for its toolchain, cache and RUSTFLAGS setup: it cannot check another target.
+      - uses: amqp-rs/actions/build@main
+        with:
+          check: false
+          test: false
+      - name: Check for Android
+        run: |
+          rustup target add aarch64-linux-android
+          cargo check --locked --target aarch64-linux-android --all-targets --no-default-features --features platform-verifier,native-certs,futures
