@@ -1260,6 +1260,16 @@ mod tests {
         }
 
         #[test]
+        fn handshake_error_would_block_display() {
+            let mid =
+                expect_would_block(test_connector().connect("example.com", ScriptedIo::default()));
+            let err = HandshakeError::WouldBlock(mid);
+            assert_eq!(err.to_string(), "Handshake needs another I/O attempt");
+            assert_eq!(format!("{err:?}"), "HandshakeError(\"WouldBlock\")");
+            assert!(err.source().is_none());
+        }
+
+        #[test]
         fn partial_read_remains_mid_handshake() {
             let io = ScriptedIo::default().reads([Step::Ok(&[0x16])]);
             let mid = expect_would_block(test_connector().connect("example.com", io));
