@@ -353,6 +353,42 @@ impl RustlsConnectorConfig {
         self.store.append(&mut der_certs)
     }
 
+    /// Add the given DER-encoded certificates as additional roots, or none of them if one of them
+    /// is not a valid trust anchor.
+    ///
+    /// Unlike [`add_parsable_certificates`](Self::add_parsable_certificates), which leaves it to
+    /// the build of the connector to skip or reject certificates, this checks each certificate
+    /// right away, the way rustls checks the roots of a certificate store, so a connector built
+    /// without the platform verifier trusts all of them.
+    ///
+    /// The platform verifier (`with_platform_verifier`, with the `platform-verifier` feature)
+    /// gets them as extra roots, like those of `add_parsable_certificates`: building the
+    /// connector fails if it rejects one, and on Android, where it cannot use extra roots at
+    /// all, if any were added. On Apple platforms and Windows, it parses extra roots itself, and
+    /// accepts some certificates that this method refuses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error of kind [`InvalidData`](io::ErrorKind::InvalidData) for the first
+    /// certificate that is not a valid trust anchor. Its message gives the position of that
+    /// certificate in `der_certs`, counted from 0, and its payload's source is the
+    /// [`webpki::Error`] saying why. No certificate is added then.
+    pub fn add_root_certificates(
+        &mut self,
+        mut der_certs: Vec<CertificateDer<'static>>,
+    ) -> io::Result<()> {
+        for (index, cert) in der_certs.iter().enumerate() {
+            webpki::anchor_from_trusted_cert(cert).map_err(|error| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    InvalidRootCertificate { index, error },
+                )
+            })?;
+        }
+        self.store.append(&mut der_certs);
+        Ok(())
+    }
+
     /// Queue the given DER-encoded certificates as additional roots.
     ///
     /// Chainable variant of [`add_parsable_certificates`](Self::add_parsable_certificates); see it
@@ -674,6 +710,27 @@ impl RustlsConnector {
                 .map_err(tls_errors_as_invalid_data),
             Err(err) => Poll::Ready(Err(err.take().expect("polled after completion"))),
         })
+    }
+}
+
+/// The certificate that [`RustlsConnectorConfig::add_root_certificates`] refused, by its position
+/// in the certificates it was given, and why.
+#[derive(Debug)]
+struct InvalidRootCertificate {
+    index: usize,
+    error: webpki::Error,
+}
+
+impl fmt::Display for InvalidRootCertificate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // The reason is the source, so that error reporters don't print it twice.
+        write!(f, "Invalid root certificate at index {}", self.index)
+    }
+}
+
+impl Error for InvalidRootCertificate {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -1033,6 +1090,41 @@ mod tests {
             .with_webpki_root_certs()
             .platform_verifier_extra_roots();
         assert_eq!(roots, webpki_root_certs::TLS_SERVER_ROOT_CERTS);
+    }
+
+    #[test]
+    fn strict_roots_are_all_added_or_none() {
+        let ca = || CertificateDer::from(&include_bytes!("../test-data/ca.der")[..]);
+        let truncated = || CertificateDer::from(&include_bytes!("../test-data/ca.der")[..64]);
+        let mut config = RustlsConnectorConfig::default();
+        config.add_root_certificates(Vec::new()).unwrap();
+        assert!(config.store.is_empty());
+        config.add_root_certificates(vec![ca()]).unwrap();
+        assert_eq!(config.store, [ca()]);
+
+        for (index, certs) in [
+            (0, vec![CertificateDer::from(Vec::new())]),
+            (0, vec![truncated(), ca()]),
+            (1, vec![ca(), truncated(), CertificateDer::from(vec![0x00])]),
+            (2, vec![ca(), ca(), truncated()]),
+        ] {
+            let err = config.add_root_certificates(certs).unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidData, "{err}");
+            // Error reporters print each source in turn: the reason must come once.
+            let chain: Vec<_> =
+                std::iter::successors(Some(&err as &dyn Error), |err| (*err).source())
+                    .map(ToString::to_string)
+                    .collect();
+            assert_eq!(chain.len(), 2, "{chain:?}");
+            assert_eq!(
+                chain[0],
+                format!("Invalid root certificate at index {index}")
+            );
+            // Callers may downcast the payload's source to the webpki error.
+            let source = err.get_ref().unwrap().source().unwrap();
+            assert!(source.is::<webpki::Error>(), "{source:?}");
+            assert_eq!(config.store, [ca()]);
+        }
     }
 
     // Everything below needs a crypto provider to build a connector, or shares the scripted
@@ -1538,6 +1630,22 @@ mod tests {
                 .with_parsable_certificates(vec![test_ca()]);
             config.native_certs = vec![CertificateDer::from(vec![0x00, 0x01, 0x02])];
             config.native_certs_needed = true;
+            config.connector_with_no_client_auth().unwrap();
+        }
+
+        #[test]
+        fn strict_roots_are_trusted() {
+            let mut config = RustlsConnectorConfig::default();
+            config.add_root_certificates(vec![test_ca()]).unwrap();
+            config.connector_with_no_client_auth().unwrap();
+        }
+
+        #[test]
+        #[cfg(all(feature = "platform-verifier", not(target_os = "android")))]
+        fn platform_verifier_takes_strict_roots() {
+            let mut config = RustlsConnectorConfig::new_with_platform_verifier();
+            config.add_root_certificates(vec![test_ca()]).unwrap();
+            assert_eq!(config.clone().platform_verifier_extra_roots(), [test_ca()]);
             config.connector_with_no_client_auth().unwrap();
         }
 
