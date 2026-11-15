@@ -31,6 +31,8 @@ jobs:
   # cross C toolchain.
   android:
     runs-on: ubuntu-latest
+    # The limit that the shared build workflow gives its jobs, which does not cover this one.
+    timeout-minutes: 60
     steps:
       - uses: amqp-rs/actions/checkout@main
       # Only for its toolchain, cache and RUSTFLAGS setup: it cannot check another target.
