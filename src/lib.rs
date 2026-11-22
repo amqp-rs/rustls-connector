@@ -78,6 +78,12 @@
 //! println!("{}", String::from_utf8_lossy(&res));
 //! ```
 
+// Compiles the README's example as a doctest. It builds its connector with the platform
+// verifier, so it needs the `platform-verifier` feature.
+#[cfg(all(doctest, feature = "platform-verifier"))]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
+
 /// Reexport of the [`rustls`](https://docs.rs/rustls) crate.
 pub use rustls;
 /// Reexport of the [`rustls_pki_types`](https://docs.rs/rustls-pki-types) crate.
