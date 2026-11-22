@@ -1,7 +1,7 @@
 <div align="center">
 
 [![API Docs](https://docs.rs/rustls-connector/badge.svg)](https://docs.rs/rustls-connector)
-[![Build status](https://github.com/amqp-rs/rustls-connector/workflows/Build%20and%20test/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions)
+[![Build status](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yaml/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yaml)
 [![Downloads](https://img.shields.io/crates/d/rustls-connector.svg)](https://crates.io/crates/rustls-connector)
 [![Dependency Status](https://deps.rs/repo/github/amqp-rs/rustls-connector/status.svg)](https://deps.rs/repo/github/amqp-rs/rustls-connector)
 [![LICENSE](https://img.shields.io/crates/l/rustls-connector)](LICENSE)
