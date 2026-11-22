@@ -25,6 +25,8 @@ webpki-root-certs = ["dep:webpki-root-certs"]
 # See https://docs.rs/rustls/latest/rustls/#crate-features. for more info
 rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs", "rustls/prefer-post-quantum"] # default, but doesn't build everywhere
 rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)
+aws-lc-rs          = ["rustls--aws_lc_rs"] # the name the next major keeps
+ring               = ["rustls--ring"] # the name the next major keeps
 
 [dependencies]
 log = "^0.4"

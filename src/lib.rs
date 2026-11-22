@@ -28,6 +28,8 @@
 //! |------|-------|
 //! | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
 //! | `rustls--ring` | Uses ring (more portable) |
+//! | `aws-lc-rs` | Alias of `rustls--aws_lc_rs`, and its name in the next major |
+//! | `ring` | Alias of `rustls--ring`, and its name in the next major |
 //!
 //! A process-level default installed with
 //! [`CryptoProvider::install_default`](rustls::crypto::CryptoProvider::install_default)

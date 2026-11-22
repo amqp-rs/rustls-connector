@@ -46,6 +46,8 @@ fails with the platform verifier.
 |------|-------|
 | `rustls--aws_lc_rs` *(default)* | Uses aws-lc-rs, preferring post-quantum key exchange |
 | `rustls--ring` | Uses ring (more portable) |
+| `aws-lc-rs` | Alias of `rustls--aws_lc_rs`, and its name in the next major |
+| `ring` | Alias of `rustls--ring`, and its name in the next major |
 
 Connectors use the process-level rustls crypto provider when one is installed.
 Otherwise they pick aws-lc-rs, or ring if only `rustls--ring` is enabled, and
