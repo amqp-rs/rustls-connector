@@ -41,7 +41,7 @@ Explicitly added roots are kept as DER in the config's `store`: `add_parsable_ce
 
 Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt through `HandshakeIo` (which retries `Interrupted` writes and flushes in place, records blocked writes, and fails zero-length ones with `WriteZero`), and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending, or when the stream reports `WouldBlock` or `NotConnected`. `MidHandshakeTlsStream::wants_write()`/`wants_read()` tell callers which readiness to wait for.
 
-**MSRV:** 1.85.0
+**MSRV:** 1.85.0. The README states it too.
 
 ## CI
 

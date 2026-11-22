@@ -16,6 +16,8 @@ certificates, call `connect` on a stream such as a `TcpStream`, and retry the
 handshake on non-blocking streams the same way. It is the rustls backend of
 `tcp-stream`, and the `futures` feature adds an async `connect_async`.
 
+The minimum supported Rust version is 1.85.
+
 ## Feature flags
 
 ### Certificate store (pick at least one)
