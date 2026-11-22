@@ -73,7 +73,7 @@ rustls-connector = { version = "0.23", default-features = false, features = ["pl
 
 To connect to several servers, build the connector once and reuse it:
 
-```rust
+```rust,no_run
 use rustls_connector::RustlsConnector;
 
 use std::{
