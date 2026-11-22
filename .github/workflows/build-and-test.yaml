@@ -5,8 +5,6 @@ on:
     branches:
       - main
       - rustls-connector-0.23.x
-    tags:
-      - "**"
   pull_request:
   schedule:
     - cron: "0 12 * * 1"
@@ -16,44 +14,25 @@ permissions:
 
 jobs:
   build_and_test:
-    runs-on: ${{ matrix.os }}
-    continue-on-error: ${{ matrix.rust == 'nightly' }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        rust: [stable]
-        include:
-          # The ring and provider-less feature sets test nothing that depends on the OS or the
-          # toolchain.
-          - os: ubuntu-latest
-            rust: stable
-            portable-test-features: |
-              webpki-root-certs,futures,rustls--ring
-              platform-verifier,native-certs,webpki-root-certs
-          - os: ubuntu-latest
-            rust: nightly
-          - os: ubuntu-latest
-            rust: beta
-          - os: ubuntu-latest
-            rust: msrv
-    steps:
-      - uses: amqp-rs/actions/checkout@main
-      - uses: amqp-rs/actions/aws-lc-sys-deps@main
-      - uses: amqp-rs/actions/build@main
-        with:
-          rust: ${{ matrix.rust }}
-          # The default run only covers default features; these cover the tests gated on the
-          # other features, the ring provider, and the build without a provider feature.
-          test-features: |
-            platform-verifier,native-certs,webpki-root-certs,futures,logging,rustls--aws_lc_rs,rustls--ring
-            ${{ matrix.portable-test-features }}
+    uses: amqp-rs/actions/.github/workflows/reusable-build.yml@main
+    with:
+      setup: aws-lc-sys-deps
+      # The default run only covers default features: also test every feature together, which
+      # the tests gated on the other features need.
+      test-runs: --all-features
+      # The ring provider and the build without a provider feature test nothing that depends
+      # on the OS or the toolchain.
+      linux-stable-test-features: |
+        webpki-root-certs,futures,rustls--ring
+        platform-verifier,native-certs,webpki-root-certs
 
   # The Android-only code paths are not built by any job above, nor the compile-time pins of the
   # platform-verifier constants in the tests. Without a crypto provider feature, this needs no
   # cross C toolchain.
   android:
     runs-on: ubuntu-latest
+    # The limit that the shared build workflow gives its jobs, which does not cover this one.
+    timeout-minutes: 60
     steps:
       - uses: amqp-rs/actions/checkout@main
       # Only for its toolchain, cache and RUSTFLAGS setup: it cannot check another target.

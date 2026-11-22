@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents working with code in this repository.
 
 ## Commands
 
@@ -37,7 +37,7 @@ This is a single-file library (`src/lib.rs`) that wraps `rustls` with a connecto
 - `logging` — forwards to `rustls/logging` and `futures-rustls?/logging` (rustls log output through the `log` crate)
 - `rustls--aws_lc_rs` (default) / `rustls--ring` — crypto backend selection, made by `crypto_provider()` and documented in the crate docs' feature flags section (`rustls--aws_lc_rs` also enables rustls's `prefer-post-quantum`, a rustls default that this crate otherwise loses by disabling rustls's default features)
 
-`platform-verifier` can be combined with `webpki-root-certs` and explicitly added roots, which are passed to the platform verifier via `new_with_extra_roots` (plain `Verifier::new` when there are none). Native certs are kept in a separate field and only passed to it in some cases: `with_native_certs()` records that decision in `native_certs_needed` (`platform_verifier_needs_native_certs()` around the pure `needs_native_certs()`), and `with_platform_verifier` documents the rules, the Android refusal of extra roots and the JNI initialization Android needs.
+Explicitly added roots are kept as DER in the config's `store`: `add_parsable_certificates` queues them unchecked, for the build to skip (root store) or reject (platform verifier) those that do not parse, and `add_root_certificates` only queues a set whose certificates all pass `webpki::anchor_from_trusted_cert`, the check that rustls's root store applies, and otherwise fails with the index of the first one that does not, adding none. `platform-verifier` can be combined with `webpki-root-certs` and explicitly added roots, which are passed to the platform verifier via `new_with_extra_roots` (plain `Verifier::new` when there are none). Native certs are kept in a separate field and only passed to it in some cases: `with_native_certs()` records that decision in `native_certs_needed` (`platform_verifier_needs_native_certs()` around the pure `needs_native_certs()`), and `with_platform_verifier` documents the rules, the Android refusal of extra roots and the JNI initialization Android needs.
 
 Each synchronous `handshake()` call flushes the underlying stream, makes at most one `complete_io()` attempt through `HandshakeIo` (which retries `Interrupted` writes and flushes in place, records blocked writes, and fails zero-length ones with `WriteZero`), and returns `WouldBlock` with `MidHandshakeTlsStream` while negotiation or writes remain pending, or when the stream reports `WouldBlock` or `NotConnected`. `MidHandshakeTlsStream::wants_write()`/`wants_read()` tell callers which readiness to wait for.
 
@@ -45,6 +45,6 @@ Each synchronous `handshake()` call flushes the underlying stream, makes at most
 
 ## CI
 
-The workflows in `.github/workflows/` delegate to shared composite actions in [`amqp-rs/actions`](https://github.com/amqp-rs/actions). They reference those actions as `@main` on purpose: that repository is ours, and it keeps action bumps in sync across all amqp-rs repositories. Do not pin them to a SHA or tag. For the same reason, `.github/dependabot.yml` only tracks `cargo`, and `amqp-rs/actions` bumps the third-party actions itself.
+The workflows in `.github/workflows/` delegate to the shared reusable workflows and composite actions in [`amqp-rs/actions`](https://github.com/amqp-rs/actions), and only keep their triggers. They reference them as `@main` on purpose: that repository is ours, and it keeps action bumps in sync across all amqp-rs repositories. Do not pin them to a SHA or tag. For the same reason, `.github/dependabot.yml` only tracks `cargo`, and `amqp-rs/actions` bumps the third-party actions itself.
 
-`build-and-test.yaml` passes extra feature sets to the shared build action (`test-features`) so the tests gated on non-default features run, including without a crypto provider feature (that set and the ring one only on Linux stable, as they test nothing OS- or toolchain-specific), and has an `android` job that checks the Android-only code paths for `aarch64-linux-android`, test targets included, as they hold compile-time pins of the platform-verifier constants. The shared build action cannot check another target, so that job only uses it to set up the toolchain, cache and `RUSTFLAGS`, and runs `cargo check` itself.
+`build-and-test.yaml` has the shared build workflow test every feature together (`test-runs: --all-features`), so the tests gated on non-default features run, and, through `linux-stable-test-features`, the ring provider and the build without a crypto provider feature, which test nothing OS- or toolchain-specific; it also has an `android` job that checks the Android-only code paths for `aarch64-linux-android`, test targets included, as they hold compile-time pins of the platform-verifier constants. The shared build action cannot check another target, so that job only uses it to set up the toolchain, cache and `RUSTFLAGS`, and runs `cargo check` itself. It also sets its own `timeout-minutes: 60`: that is the limit that the shared build workflow gives its jobs, which does not cover a job that uses the `build` action directly.

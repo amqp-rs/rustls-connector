@@ -35,6 +35,12 @@ cannot take any roots besides the platform's: extra root certificates, the
 webpki roots, or native certificates while `SSL_CERT_FILE` or `SSL_CERT_DIR`
 is set.
 
+Extra root certificates can be added to any of these stores:
+`add_root_certificates` refuses the whole set when one certificate is not a
+valid trust anchor, and says which one, while `add_parsable_certificates`
+leaves it to the build of the connector, which skips such certificates, or
+fails with the platform verifier.
+
 ### Rustls crypto provider (one is used, see below)
 
 | Flag | Notes |
