@@ -1,7 +1,7 @@
 <div align="center">
 
 [![API Docs](https://docs.rs/rustls-connector/badge.svg)](https://docs.rs/rustls-connector)
-[![Build status](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yaml/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yaml)
+[![Build status](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yml/badge.svg)](https://github.com/amqp-rs/rustls-connector/actions/workflows/build-and-test.yml)
 [![Downloads](https://img.shields.io/crates/d/rustls-connector.svg)](https://crates.io/crates/rustls-connector)
 [![Dependency Status](https://deps.rs/repo/github/amqp-rs/rustls-connector/status.svg)](https://deps.rs/repo/github/amqp-rs/rustls-connector)
 [![LICENSE](https://img.shields.io/crates/l/rustls-connector)](LICENSE)
@@ -18,6 +18,8 @@ handshake on non-blocking streams the same way. It is the rustls backend of
 
 Both connection methods accept borrowed I/O streams and streams that do not
 implement `Send`; async streams must also implement `Unpin`.
+
+The minimum supported Rust version is 1.85.
 
 ## Feature flags
 

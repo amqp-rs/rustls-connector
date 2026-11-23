@@ -1,6 +1,6 @@
 [package]
 name = "rustls-connector"
-version = "0.23.11"
+version = "0.23.12"
 edition = "2024"
 authors = ["Marc-Antoine Perennou <Marc-Antoine@Perennou.com>"]
 description = "Connector similar to openssl or native-tls for rustls"
@@ -27,7 +27,7 @@ rustls--aws_lc_rs  = ["futures-rustls?/aws-lc-rs", "rustls/aws_lc_rs", "rustls/p
 rustls--ring       = ["futures-rustls?/ring", "rustls/ring"] # more compatible, (e.g., easily builds on Windows)
 
 [dependencies]
-log = "^0.4"
+log = "^0.4.8"
 
 [dependencies.futures-io]
 version  = "^0.3"
